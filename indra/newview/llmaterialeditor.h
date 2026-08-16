@@ -111,6 +111,20 @@ class LLMaterialEditor : public LLPreview, public LLVOInventoryListener
                                         const LLUUID& dest_folder_id = LLUUID::null);
     static void loadMaterialFromFile(const std::string& filename, S32 index = -1, const LLUUID& dest_folder = LLUUID::null);
 
+    // Populate the editor from already-packed images, as produced by the PBR
+    // texture packer. Any of the images may be null, in which case that slot is
+    // left empty. Sets up the J2C buffers as well as the texture ids, because
+    // saveTextures() uploads from those buffers -- ids alone would save a
+    // material pointing at textures that were never uploaded. The images are
+    // copied, since encoding rescales them in place. Taken by value so the
+    // caller's reference keeps the refcount above one, which is what makes
+    // LLImageRaw::duplicate() actually copy rather than hand back the original.
+    void setFromPackedTextures(LLPointer<LLImageRaw> base_color,
+                               LLPointer<LLImageRaw> normal,
+                               LLPointer<LLImageRaw> orm,
+                               LLPointer<LLImageRaw> emissive,
+                               const std::string& material_name);
+
     void onSelectionChanged(); // live overrides selection changes
 
     static void updateLive();

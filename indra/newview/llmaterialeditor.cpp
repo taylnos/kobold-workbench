@@ -2607,6 +2607,96 @@ void LLMaterialEditor::loadMaterial(const tinygltf::Model &model_in, const std::
     }
 }
 
+void LLMaterialEditor::setFromPackedTextures(LLPointer<LLImageRaw> base_color,
+                                             LLPointer<LLImageRaw> normal,
+                                             LLPointer<LLImageRaw> orm,
+                                             LLPointer<LLImageRaw> emissive,
+                                             const std::string& material_name)
+{
+    // pack_textures() encodes through convertToUploadFile(), which rescales the
+    // raw images in place. The packer still owns and displays the originals, so
+    // work on copies. duplicate() only copies when refcount > 1, which holds
+    // here because the caller retains a reference.
+    LLPointer<LLImageRaw> base_color_img = base_color.notNull() ? base_color->duplicate() : nullptr;
+    LLPointer<LLImageRaw> normal_img     = normal.notNull()     ? normal->duplicate()     : nullptr;
+    LLPointer<LLImageRaw> mr_img         = orm.notNull()        ? orm->duplicate()        : nullptr;
+    LLPointer<LLImageRaw> emissive_img   = emissive.notNull()   ? emissive->duplicate()   : nullptr;
+    LLPointer<LLImageRaw> occlusion_img; // already folded into the ORM red channel
+
+    if (base_color_img)
+    {
+        mBaseColorFetched = LLViewerTextureManager::getFetchedTexture(base_color_img, FTType::FTT_LOCAL_FILE, true);
+    }
+    if (normal_img)
+    {
+        mNormalFetched = LLViewerTextureManager::getFetchedTexture(normal_img, FTType::FTT_LOCAL_FILE, true);
+    }
+    if (mr_img)
+    {
+        mMetallicRoughnessFetched = LLViewerTextureManager::getFetchedTexture(mr_img, FTType::FTT_LOCAL_FILE, true);
+    }
+    if (emissive_img)
+    {
+        mEmissiveFetched = LLViewerTextureManager::getFetchedTexture(emissive_img, FTType::FTT_LOCAL_FILE, true);
+    }
+
+    pack_textures(base_color_img, normal_img, mr_img, emissive_img, occlusion_img,
+                  mBaseColorJ2C, mNormalJ2C, mMetallicRoughnessJ2C, mEmissiveJ2C);
+
+    LLUUID base_color_id;
+    if (mBaseColorFetched.notNull())
+    {
+        mBaseColorFetched->forceToSaveRawImage(0, F32_MAX);
+        base_color_id = mBaseColorFetched->getID();
+        mBaseColorName = MATERIAL_BASE_COLOR_DEFAULT_NAME;
+    }
+
+    LLUUID normal_id;
+    if (mNormalFetched.notNull())
+    {
+        mNormalFetched->forceToSaveRawImage(0, F32_MAX);
+        normal_id = mNormalFetched->getID();
+        mNormalName = MATERIAL_NORMAL_DEFAULT_NAME;
+    }
+
+    LLUUID mr_id;
+    if (mMetallicRoughnessFetched.notNull())
+    {
+        mMetallicRoughnessFetched->forceToSaveRawImage(0, F32_MAX);
+        mr_id = mMetallicRoughnessFetched->getID();
+        mMetallicRoughnessName = MATERIAL_METALLIC_DEFAULT_NAME;
+    }
+
+    LLUUID emissive_id;
+    if (mEmissiveFetched.notNull())
+    {
+        mEmissiveFetched->forceToSaveRawImage(0, F32_MAX);
+        emissive_id = mEmissiveFetched->getID();
+        mEmissiveName = MATERIAL_EMISSIVE_DEFAULT_NAME;
+    }
+
+    setBaseColorId(base_color_id);
+    setBaseColorUploadId(base_color_id);
+    setMetallicRoughnessId(mr_id);
+    setMetallicRoughnessUploadId(mr_id);
+    setEmissiveId(emissive_id);
+    setEmissiveUploadId(emissive_id);
+    setNormalId(normal_id);
+    setNormalUploadId(normal_id);
+
+    if (!material_name.empty())
+    {
+        setMaterialName(material_name);
+    }
+
+    markChangesUnsaved(U32_MAX);
+
+    openFloater(getKey());
+    setFocus(true);
+    setCanSave(true);
+    setCanSaveAs(true);
+}
+
 bool LLMaterialEditor::setFromGltfModel(const tinygltf::Model& model, S32 index, bool set_textures)
 {
     if (model.materials.size() > index)
