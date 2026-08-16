@@ -43,6 +43,7 @@
 #include "alfloatergroupprofile.h"
 #include "alfloaterlightbox.h"
 #include "alfloaterparticleeditor.h"
+#include "alfloaterpbrpacker.h"
 #include "alfloaterprofilelegacy.h"
 #include "alfloaterprogressview.h"
 #include "alfloaterregiontracker.h"
@@ -600,6 +601,7 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("message_rewriter", "floater_message_rewriter.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterMessageRewriter>);
     LLFloaterReg::add("music_ticker", "floater_music_ticker.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     LLFloaterReg::add("particle_editor", "floater_al_particle_editor.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterParticleEditor>);
+    LLFloaterReg::add("pbr_packer", "floater_al_pbr_packer.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterPBRPacker>);
     LLFloaterReg::add("progress_view", "floater_al_progress_view.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterProgressView>);
     LLFloaterReg::add("quick_settings", "floater_quick_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     LLFloaterReg::add("region_tracker", "floater_al_region_tracker.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterRegionTracker>);

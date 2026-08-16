@@ -1,0 +1,338 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<floater
+ name="pbr_packer"
+ title="PBR TEXTURE PACKER"
+ help_topic="floater_pbr_packer"
+ single_instance="true"
+ reuse_instance="true"
+ layout="topleft"
+ height="712"
+ width="550"
+ min_height="712"
+ min_width="550"
+ can_resize="false">
+
+    <!-- ============ Source Textures ============ -->
+
+    <text type="string" follows="left|top" layout="topleft"
+     left="8" top="18" width="200" height="16" valign="center"
+     font="SansSerifBold" name="source_section_label">Source Textures</text>
+    <button follows="left|top" layout="topleft"
+     left="442" top="16" width="96" height="20" label="Add files..."
+     tool_tip="Pick several maps at once and place them by filename"
+     name="add_files" />
+    <view_border follows="left|top" layout="topleft"
+     left="8" top="38" width="534" height="0"
+     bevel_style="none" border_thickness="1" mouse_opaque="false"
+     name="rule_source" />
+
+    <panel follows="left|top" layout="topleft" left="8" top="44"
+     width="128" height="170" border="true" name="base_color_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="94" height="16" valign="center"
+         name="base_color_label">Base Color</text>
+        <button follows="left|top" layout="topleft" left="102" top="3"
+         width="22" height="18" label="X"
+         tool_tip="Clear this slot" name="base_color_clear" />
+        <button follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" label=""
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         tool_tip="Click to choose a base colour map" name="base_color_thumb" />
+    </panel>
+
+    <panel follows="left|top" layout="topleft" left="142" top="44"
+     width="128" height="170" border="true" name="opacity_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="94" height="16" valign="center"
+         name="opacity_label">Opacity</text>
+        <button follows="left|top" layout="topleft" left="102" top="3"
+         width="22" height="18" label="X"
+         tool_tip="Clear this slot" name="opacity_clear" />
+        <button follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" label=""
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         tool_tip="Click to choose an opacity map. Without one, the base colour image's own alpha is kept."
+         name="opacity_thumb" />
+        <combo_box follows="left|top" layout="topleft" left="4" top="144"
+         width="94" height="22"
+         tool_tip="Which channel of this file holds the data"
+         name="opacity_channel">
+            <combo_box.item label="Red" name="r" value="0" />
+            <combo_box.item label="Green" name="g" value="1" />
+            <combo_box.item label="Blue" name="b" value="2" />
+            <combo_box.item label="Alpha" name="a" value="3" />
+            <combo_box.item label="Luminance" name="l" value="4" />
+        </combo_box>
+        <button follows="left|top" layout="topleft" left="100" top="144"
+         width="24" height="22" is_toggle="true"
+         image_overlay="AL_Invert_Channel"
+         image_unselected="Toolbar_Middle_Off"
+         image_selected="Toolbar_Middle_Selected"
+         image_hover_unselected="Toolbar_Middle_Over"
+         tool_tip="Invert this channel" name="opacity_invert" />
+    </panel>
+
+    <panel follows="left|top" layout="topleft" left="276" top="44"
+     width="128" height="170" border="true" name="emissive_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="94" height="16" valign="center"
+         name="emissive_label">Emissive</text>
+        <button follows="left|top" layout="topleft" left="102" top="3"
+         width="22" height="18" label="X"
+         tool_tip="Clear this slot" name="emissive_clear" />
+        <button follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" label=""
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         tool_tip="Click to choose an emissive map" name="emissive_thumb" />
+    </panel>
+
+    <panel follows="left|top" layout="topleft" left="410" top="44"
+     width="128" height="170" border="true" name="normal_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="94" height="16" valign="center"
+         name="normal_label">Normal</text>
+        <button follows="left|top" layout="topleft" left="102" top="3"
+         width="22" height="18" label="X"
+         tool_tip="Clear this slot" name="normal_clear" />
+        <button follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" label=""
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         tool_tip="Click to choose a normal map" name="normal_thumb" />
+        <button follows="left|top" layout="topleft" left="100" top="144"
+         width="24" height="22" is_toggle="true"
+         image_overlay="AL_Invert_Channel"
+         image_unselected="Toolbar_Middle_Off"
+         image_selected="Toolbar_Middle_Selected"
+         image_hover_unselected="Toolbar_Middle_Over"
+         tool_tip="Flip the green channel. glTF expects OpenGL-convention normals with +Y up; enable this for maps baked for DirectX."
+         name="normal_invert" />
+    </panel>
+
+    <panel follows="left|top" layout="topleft" left="8" top="218"
+     width="128" height="170" border="true" name="occlusion_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="94" height="16" valign="center"
+         name="occlusion_label">Occlusion</text>
+        <button follows="left|top" layout="topleft" left="102" top="3"
+         width="22" height="18" label="X"
+         tool_tip="Clear this slot" name="occlusion_clear" />
+        <button follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" label=""
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         tool_tip="Click to choose an ambient occlusion map" name="occlusion_thumb" />
+        <combo_box follows="left|top" layout="topleft" left="4" top="144"
+         width="94" height="22"
+         tool_tip="Which channel of this file holds the data"
+         name="occlusion_channel">
+            <combo_box.item label="Red" name="r" value="0" />
+            <combo_box.item label="Green" name="g" value="1" />
+            <combo_box.item label="Blue" name="b" value="2" />
+            <combo_box.item label="Alpha" name="a" value="3" />
+            <combo_box.item label="Luminance" name="l" value="4" />
+        </combo_box>
+        <button follows="left|top" layout="topleft" left="100" top="144"
+         width="24" height="22" is_toggle="true"
+         image_overlay="AL_Invert_Channel"
+         image_unselected="Toolbar_Middle_Off"
+         image_selected="Toolbar_Middle_Selected"
+         image_hover_unselected="Toolbar_Middle_Over"
+         tool_tip="Invert this channel" name="occlusion_invert" />
+    </panel>
+
+    <panel follows="left|top" layout="topleft" left="142" top="218"
+     width="128" height="170" border="true" name="roughness_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="94" height="16" valign="center"
+         name="roughness_label">Roughness</text>
+        <button follows="left|top" layout="topleft" left="102" top="3"
+         width="22" height="18" label="X"
+         tool_tip="Clear this slot" name="roughness_clear" />
+        <button follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" label=""
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         tool_tip="Click to choose a roughness map" name="roughness_thumb" />
+        <combo_box follows="left|top" layout="topleft" left="4" top="144"
+         width="94" height="22"
+         tool_tip="Which channel of this file holds the data"
+         name="roughness_channel">
+            <combo_box.item label="Red" name="r" value="0" />
+            <combo_box.item label="Green" name="g" value="1" />
+            <combo_box.item label="Blue" name="b" value="2" />
+            <combo_box.item label="Alpha" name="a" value="3" />
+            <combo_box.item label="Luminance" name="l" value="4" />
+        </combo_box>
+        <button follows="left|top" layout="topleft" left="100" top="144"
+         width="24" height="22" is_toggle="true"
+         image_overlay="AL_Invert_Channel"
+         image_unselected="Toolbar_Middle_Off"
+         image_selected="Toolbar_Middle_Selected"
+         image_hover_unselected="Toolbar_Middle_Over"
+         tool_tip="Invert this channel. Enable for a gloss or smoothness map, which is the inverse of roughness."
+         name="roughness_invert" />
+    </panel>
+
+    <panel follows="left|top" layout="topleft" left="276" top="218"
+     width="128" height="170" border="true" name="metallic_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="94" height="16" valign="center"
+         name="metallic_label">Metallic</text>
+        <button follows="left|top" layout="topleft" left="102" top="3"
+         width="22" height="18" label="X"
+         tool_tip="Clear this slot" name="metallic_clear" />
+        <button follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" label=""
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         tool_tip="Click to choose a metalness map" name="metallic_thumb" />
+        <combo_box follows="left|top" layout="topleft" left="4" top="144"
+         width="94" height="22"
+         tool_tip="Which channel of this file holds the data"
+         name="metallic_channel">
+            <combo_box.item label="Red" name="r" value="0" />
+            <combo_box.item label="Green" name="g" value="1" />
+            <combo_box.item label="Blue" name="b" value="2" />
+            <combo_box.item label="Alpha" name="a" value="3" />
+            <combo_box.item label="Luminance" name="l" value="4" />
+        </combo_box>
+        <button follows="left|top" layout="topleft" left="100" top="144"
+         width="24" height="22" is_toggle="true"
+         image_overlay="AL_Invert_Channel"
+         image_unselected="Toolbar_Middle_Off"
+         image_selected="Toolbar_Middle_Selected"
+         image_hover_unselected="Toolbar_Middle_Over"
+         tool_tip="Invert this channel" name="metallic_invert" />
+    </panel>
+
+    <!-- ============ Packing Options ============ -->
+
+    <text type="string" follows="left|top" layout="topleft"
+     left="8" top="398" width="200" height="16" valign="center"
+     font="SansSerifBold" name="options_section_label">Packing Options</text>
+    <view_border follows="left|top" layout="topleft"
+     left="8" top="416" width="534" height="0"
+     bevel_style="none" border_thickness="1" mouse_opaque="false"
+     name="rule_options" />
+
+    <combo_box follows="left|top" layout="topleft"
+     left="8" top="422" width="186" height="22"
+     tool_tip="How the occlusion, roughness and metalness sources are read"
+     name="preset">
+        <combo_box.item label="Packed ORM / ARM mask" name="packed" value="1" />
+        <combo_box.item label="Separate maps" name="separate" value="0" />
+        <combo_box.item label="Separate maps (gloss)" name="gloss" value="2" />
+    </combo_box>
+    <combo_box follows="left|top" layout="topleft"
+     left="202" top_delta="0" width="116" height="22"
+     tool_tip="Size of the packed output. Auto Size follows the largest source map, never above 2048."
+     name="max_size">
+        <combo_box.item label="Auto Size" name="auto" value="0" />
+        <combo_box.item label="Max 2048" name="2048" value="2048" />
+        <combo_box.item label="Max 1024" name="1024" value="1024" />
+        <combo_box.item label="Max 512" name="512" value="512" />
+    </combo_box>
+    <check_box follows="left|top" layout="topleft"
+     left="328" top_delta="1" width="110" height="20" label="Auto re-pack"
+     tool_tip="Watch the source files and re-pack when they change on disk"
+     name="auto_repack" />
+    <button follows="left|top" layout="topleft"
+     left="444" top_delta="-1" width="94" height="22" label="Pack"
+     tool_tip="Combine the source maps into Second Life's texture set"
+     name="pack" />
+
+    <!-- ============ Packed Textures ============ -->
+
+    <text type="string" follows="left|top" layout="topleft"
+     left="8" top="454" width="200" height="16" valign="center"
+     font="SansSerifBold" name="packed_section_label">Packed Textures</text>
+    <view_border follows="left|top" layout="topleft"
+     left="8" top="472" width="534" height="0"
+     bevel_style="none" border_thickness="1" mouse_opaque="false"
+     name="rule_packed" />
+
+    <panel follows="left|top" layout="topleft" left="8" top="478"
+     width="128" height="170" border="true" name="out_base_color_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="120" height="16" valign="center"
+         name="out_base_color_label">Base Color</text>
+        <panel follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" background_visible="false"
+         name="out_base_color_thumb" />
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="144" width="120" height="22"
+         halign="center" valign="center"
+         name="out_base_color_size" />
+    </panel>
+
+    <panel follows="left|top" layout="topleft" left="142" top="478"
+     width="128" height="170" border="true" name="out_orm_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="120" height="16" valign="center"
+         name="out_orm_label">Metallic Roughness</text>
+        <panel follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" background_visible="false"
+         name="out_orm_thumb" />
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="144" width="120" height="22"
+         halign="center" valign="center"
+         name="out_orm_size" />
+    </panel>
+
+    <panel follows="left|top" layout="topleft" left="276" top="478"
+     width="128" height="170" border="true" name="out_emissive_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="120" height="16" valign="center"
+         name="out_emissive_label">Emissive</text>
+        <panel follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" background_visible="false"
+         name="out_emissive_thumb" />
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="144" width="120" height="22"
+         halign="center" valign="center"
+         name="out_emissive_size" />
+    </panel>
+
+    <panel follows="left|top" layout="topleft" left="410" top="478"
+     width="128" height="170" border="true" name="out_normal_card">
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="4" width="120" height="16" valign="center"
+         name="out_normal_label">Normal</text>
+        <panel follows="left|top" layout="topleft" left="4" top="22"
+         width="120" height="120" background_visible="false"
+         name="out_normal_thumb" />
+        <text type="string" follows="left|top" layout="topleft"
+         left="4" top="144" width="120" height="22"
+         halign="center" valign="center"
+         name="out_normal_size" />
+    </panel>
+
+    <button follows="left|top" layout="topleft"
+     left="8" top="656" width="110" height="22" label="Save to disk..."
+     tool_tip="Write the packed maps out as PNG files"
+     name="save_to_disk" />
+    <button follows="left|top" layout="topleft"
+     left="124" top_delta="0" width="164" height="22" label="Make Local Material"
+     tool_tip="Register the packed set as a local material. It appears in the Local tab of any material picker and updates in place when you re-pack."
+     name="make_local_material" />
+    <button follows="left|top" layout="topleft"
+     left="294" top_delta="0" width="166" height="22" label="Send to Material Editor"
+     tool_tip="Hand the packed maps to the material editor to name, price and upload"
+     name="send_to_editor" />
+
+    <text type="string" follows="left|top" layout="topleft"
+     left="8" top="684" width="534" height="18" valign="center"
+     use_ellipses="true" name="status" />
+
+</floater>

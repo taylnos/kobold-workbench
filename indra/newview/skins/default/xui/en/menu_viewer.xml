@@ -1305,6 +1305,13 @@ function="World.EnvPreset"
           function="Floater.ToggleOrBringToFront"
           parameter="local_assets"/>
        </menu_item_call>
+       <menu_item_call
+        label="PBR Texture Packer..."
+        name="PBRTexturePacker">
+         <menu_item_call.on_click
+          function="Floater.ToggleOrBringToFront"
+          parameter="pbr_packer"/>
+       </menu_item_call>
        <menu_item_separator/>
        <menu_item_check
          label="Build"

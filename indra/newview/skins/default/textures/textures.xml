@@ -988,6 +988,7 @@ with the same filename but different name
   <texture name="AlchemyBeta128" file_name="alchemy/alchemybeta_128.png" preload="false" />
   <texture name="AlchemyProject128" file_name="alchemy/alchemyproject_128.png" preload="false" />
   <texture name="AlchemyTest128" file_name="alchemy/alchemytest_128.png" preload="false" />
+  <texture name="AL_Invert_Channel" file_name="alchemy/al_invert_channel.png" preload="false" />
 
   <texture name="Cam_Recall" file_name="icons/Cam_Recall.png"/>
   <texture name="Cam_Save" file_name="icons/Cam_Save.png"/>

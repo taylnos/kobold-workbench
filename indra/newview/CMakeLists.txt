@@ -167,6 +167,7 @@ set(viewer_SOURCE_FILES
     alfloatergroupprofile.cpp
     alfloaterlightbox.cpp
     alfloaterparticleeditor.cpp
+    alfloaterpbrpacker.cpp
     alfloaterprofilelegacy.cpp
     alfloaterprogressview.cpp
     alfloaterregiontracker.cpp
@@ -198,6 +199,7 @@ set(viewer_SOURCE_FILES
     alpanelsearchplaces.cpp
     alpanelsearchweb.cpp
     alpanelstreaminfo.cpp
+    alpbrpacker.cpp
     alpickitem.cpp
     alsceneexplorermodel.cpp
     alstreaminfo.cpp
@@ -936,6 +938,7 @@ set(viewer_HEADER_FILES
     alfloatergroupprofile.h
     alfloaterlightbox.h
     alfloaterparticleeditor.h
+    alfloaterpbrpacker.h
     alfloaterprofilelegacy.h
     alfloaterprogressview.h
     alfloaterregiontracker.h
@@ -967,6 +970,7 @@ set(viewer_HEADER_FILES
     alpanelsearchplaces.h
     alpanelsearchweb.h
     alpanelstreaminfo.h
+    alpbrpacker.h
     alpickitem.h
     alsceneexplorermodel.h
     alstreaminfo.h
@@ -2373,6 +2377,7 @@ if (BUILD_TESTING)
   # This creates a separate test project per file listed.
 
   SET(viewer_TEST_SOURCE_FILES
+    alpbrpacker.cpp
     alsceneexplorerpredicate.cpp
     llagentaccess.cpp
     lldateutil.cpp
