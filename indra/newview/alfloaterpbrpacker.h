@@ -194,11 +194,21 @@ private:
     // Kick off an off-thread decode of one source file into its slot.
     // auto_repack re-packs once every outstanding load has landed.
     void loadSlot(ALPackSlot slot, const std::string& path, bool auto_repack);
+
+    // The same for a file that feeds several slots at once, such as a packed
+    // ORM mask read three ways: one decode and one thumbnail rescale, shared.
+    void loadSlots(const std::vector<ALPackSlot>& slots, const std::string& path, bool auto_repack);
     void noteSourceTime(ALPackSlot slot);
 
     static ALPackChannel channelFromIndex(S32 index);
 
     ALPackMode              mMode = ALPackMode::GLTF_PBR;
+    // Bumped by applyMode(). Worker replies carry the value they were queued
+    // under and discard themselves if it has moved on, because the slots they
+    // were headed for may no longer exist and the file stem they wrote under
+    // has been replaced. A counter rather than comparing mMode, so a round trip
+    // back to the same mode still invalidates.
+    U32                     mModeGeneration = 0;
     std::vector<ALPackSlot> mActiveSlots;    // ingest slots this mode uses
     std::vector<ALPackDest> mActiveOutputs;  // packed textures this mode produces
 

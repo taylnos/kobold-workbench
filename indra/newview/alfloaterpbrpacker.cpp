@@ -27,6 +27,9 @@
 
 #include "alfloaterpbrpacker.h"
 
+#include <map>
+#include <utility>
+
 // library
 #include "alsamplerstate.h"
 #include "fsyspath.h"
@@ -180,6 +183,14 @@ namespace
         std::string mText;
     };
 
+    struct SaveResult
+    {
+        std::vector<std::pair<std::string, LLPointer<LLImageRaw>>> mFiles;
+        std::string mDirectory;
+        std::string mError;
+        S32         mWritten = 0;
+    };
+
     struct PackResult
     {
         ALPackOutputSet            mOutputs;
@@ -239,12 +250,17 @@ namespace
     // put and one TE update per face instead of half a dozen.
     struct ALSpecGlossApplyFunctor final : public LLSelectedTEMaterialFunctor
     {
+        // Only what the pack actually produced is written. A pack carrying no
+        // normal map has no business clearing the one already on the face --
+        // it is not replacing it, and there is no undo for a server write.
         LLUUID mNormalID;
         LLUUID mSpecularID;
-        U8     mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_NONE;
+        bool   mSetNormal = false;
+        bool   mSetSpecular = false;
         // Negative leaves whatever the face already carries. A pack has to be
         // able to force these to zero as well as to full: the fallback wants
         // the environment slider off, not merely untouched.
+        S16    mAlphaMode = -1;
         S16    mSpecularExponent = -1;
         S16    mEnvIntensity = -1;
         bool   mNeutralSpecularColor = false;
@@ -256,9 +272,18 @@ namespace
                                    ? new LLMaterial()
                                    : new LLMaterial(current_material->asLLSD());
 
-            material->setNormalID(mNormalID);
-            material->setSpecularID(mSpecularID);
-            material->setDiffuseAlphaMode(mAlphaMode);
+            if (mSetNormal)
+            {
+                material->setNormalID(mNormalID);
+            }
+            if (mSetSpecular)
+            {
+                material->setSpecularID(mSpecularID);
+            }
+            if (mAlphaMode >= 0)
+            {
+                material->setDiffuseAlphaMode((U8)mAlphaMode);
+            }
 
             // Both sliders default to a value that would multiply a packed
             // channel away -- the specular exponent to 0.2 and the environment
@@ -751,6 +776,12 @@ void ALFloaterPBRPacker::applyMode(ALPackMode mode)
 {
     mMode = mode;
 
+    // Anything already queued was addressed to the outgoing mode's slots and
+    // file stem, so retire it. Loads and packs still in flight check this on
+    // arrival rather than being cancelled, since the work queue has no recall.
+    ++mModeGeneration;
+    mRepackWhenLoaded = false;
+
     const SlotDef* slot_defs = nullptr;
     size_t         slot_count = 0;
     mode_slots(mode, slot_defs, slot_count);
@@ -1181,9 +1212,8 @@ void ALFloaterPBRPacker::onFilesPicked(const std::vector<std::string>& filenames
         // pair a colour map with a mask rather than combining three masks.
         if (!spec_gloss && contains_any(name, sCombinedORMTokens, LL_ARRAY_SIZE(sCombinedORMTokens)))
         {
-            loadSlot(ALPackSlot::OCCLUSION, path, false);
-            loadSlot(ALPackSlot::ROUGHNESS, path, false);
-            loadSlot(ALPackSlot::METALLIC, path, false);
+            loadSlots({ ALPackSlot::OCCLUSION, ALPackSlot::ROUGHNESS, ALPackSlot::METALLIC },
+                      path, false);
             setSlotRouting(ALPackSlot::OCCLUSION, ALPackChannel::RED, false);
             setSlotRouting(ALPackSlot::ROUGHNESS, ALPackChannel::GREEN, false);
             setSlotRouting(ALPackSlot::METALLIC, ALPackChannel::BLUE, false);
@@ -1193,8 +1223,7 @@ void ALFloaterPBRPacker::onFilesPicked(const std::vector<std::string>& filenames
 
         if (!spec_gloss && contains_any(name, sCombinedMRTokens, LL_ARRAY_SIZE(sCombinedMRTokens)))
         {
-            loadSlot(ALPackSlot::ROUGHNESS, path, false);
-            loadSlot(ALPackSlot::METALLIC, path, false);
+            loadSlots({ ALPackSlot::ROUGHNESS, ALPackSlot::METALLIC }, path, false);
             setSlotRouting(ALPackSlot::ROUGHNESS, ALPackChannel::GREEN, false);
             setSlotRouting(ALPackSlot::METALLIC, ALPackChannel::BLUE, false);
             ++assigned;
@@ -1302,6 +1331,18 @@ void ALFloaterPBRPacker::onPresetChanged()
 
 void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool auto_repack)
 {
+    loadSlots(std::vector<ALPackSlot>{ slot }, path, auto_repack);
+}
+
+void ALFloaterPBRPacker::loadSlots(const std::vector<ALPackSlot>& slots,
+                                   const std::string& path,
+                                   bool auto_repack)
+{
+    if (slots.empty())
+    {
+        return;
+    }
+
     LL::WorkQueue::ptr_t main_queue = LL::WorkQueue::getInstance("mainloop");
     LL::WorkQueue::ptr_t general_queue = LL::WorkQueue::getInstance("General");
     if (!main_queue || !general_queue)
@@ -1312,7 +1353,12 @@ void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool
 
     auto result = std::make_shared<LoadResult>();
     LLHandle<ALFloaterPBRPacker> handle = getDerivedHandle<ALFloaterPBRPacker>();
+    const U32 generation = mModeGeneration;
 
+    // One decode however many slots the file feeds. A packed ORM drives three
+    // of them, and decoding a 2048 square three times over -- then rescaling it
+    // three times for the thumbnails -- was pure waste, repeated on every
+    // watch-triggered re-pack.
     ++mPendingLoads;
     if (auto_repack)
     {
@@ -1322,7 +1368,7 @@ void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool
     const bool posted = main_queue->postTo(
         general_queue,
         [path, result]() { result->mImage = ALPBRPacker::loadRaw(path, result->mError); },
-        [handle, slot, path, auto_repack, result]()
+        [handle, slots, path, auto_repack, generation, result]()
         {
             ALFloaterPBRPacker* self = handle.get();
             if (!self)
@@ -1332,34 +1378,51 @@ void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool
 
             --self->mPendingLoads;
 
-            if (result->mImage.isNull())
+            // The material type changed while this was in flight, so the slots
+            // it was headed for may not exist any more, or may now mean a
+            // different map. Drop the image rather than resurrect a slot
+            // applyMode() just cleared -- but still fall through to the re-pack
+            // bookkeeping below, or a stale load landing last would strand it.
+            if (generation == self->mModeGeneration)
             {
-                // Silent when the watch triggered this: a decode failure there
-                // is usually the paint program still writing, and the next tick
-                // retries. Toasting it would fire every three seconds for as
-                // long as a large export takes to hit the disk.
-                if (!auto_repack)
+                if (result->mImage.isNull())
                 {
-                    notifyUser(result->mError);
+                    // Silent when the watch triggered this: a decode failure
+                    // there is usually the paint program still writing, and the
+                    // next tick retries. Toasting it would fire every three
+                    // seconds for as long as a large export takes to hit disk.
+                    if (!auto_repack)
+                    {
+                        notifyUser(result->mError);
+                    }
                 }
+                else
+                {
+                    // One small copy for the thumbnails, shared by every slot
+                    // this file feeds, so toggling channel or invert never has
+                    // to touch the full-size image again. rebuildSlotThumb()
+                    // only reads it, so sharing is safe.
+                    LLPointer<LLImageRaw> thumb =
+                        result->mImage->scaled(SLOT_THUMB_SIZE, SLOT_THUMB_SIZE);
+
+                    for (ALPackSlot slot : slots)
+                    {
+                        self->mInputs[(size_t)slot] = result->mImage;
+                        self->mSlotPaths[(size_t)slot] = path;
+                        self->noteSourceTime(slot);
+
+                        self->mSlotThumbSrc[(size_t)slot] = thumb;
+                        self->mSlotThumbDirty[(size_t)slot] = true;
+                    }
+
+                    // Whatever was packed no longer matches the inputs, so
+                    // retire it rather than leaving Save and Apply pointed at
+                    // stale maps.
+                    self->clearOutputs();
+                }
+
+                self->refreshControls();
             }
-            else
-            {
-                self->mInputs[(size_t)slot] = result->mImage;
-                self->mSlotPaths[(size_t)slot] = path;
-                self->noteSourceTime(slot);
-
-                // Keep a small copy for the slot thumbnail so toggling channel
-                // or invert never has to touch the full-size image again.
-                self->mSlotThumbSrc[(size_t)slot] = result->mImage->scaled(SLOT_THUMB_SIZE, SLOT_THUMB_SIZE);
-                self->mSlotThumbDirty[(size_t)slot] = true;
-
-                // Whatever was packed no longer matches the inputs, so retire
-                // it rather than leaving Save and Apply pointed at stale maps.
-                self->clearOutputs();
-            }
-
-            self->refreshControls();
 
             if (self->mPendingLoads == 0 && self->mRepackWhenLoaded)
             {
@@ -1411,6 +1474,10 @@ bool ALFloaterPBRPacker::tick()
         return false;
     }
 
+    // Gathered by path, so a file feeding several slots -- a packed ORM mask
+    // drives three -- is decoded once rather than once per slot.
+    std::map<std::string, std::vector<ALPackSlot>> ready;
+
     for (ALPackSlot slot : mActiveSlots)
     {
         const size_t index = (size_t)slot;
@@ -1441,8 +1508,13 @@ bool ALFloaterPBRPacker::tick()
         if (mSourceSettling[index])
         {
             mSourceSettling[index] = false;
-            loadSlot(slot, path, true);
+            ready[path].push_back(slot);
         }
+    }
+
+    for (const auto& entry : ready)
+    {
+        loadSlots(entry.second, entry.first, true);
     }
 
     return false;
@@ -1613,6 +1685,7 @@ void ALFloaterPBRPacker::onPack()
 
     auto result = std::make_shared<PackResult>();
     LLHandle<ALFloaterPBRPacker> handle = getDerivedHandle<ALFloaterPBRPacker>();
+    const U32 generation = mModeGeneration;
 
     const bool posted = main_queue->postTo(
         general_queue,
@@ -1644,7 +1717,7 @@ void ALFloaterPBRPacker::onPack()
                 result->mPaths.push_back(path);
             }
         },
-        [handle, result]()
+        [handle, generation, result]()
         {
             ALFloaterPBRPacker* self = handle.get();
             if (!self)
@@ -1654,9 +1727,18 @@ void ALFloaterPBRPacker::onPack()
 
             self->mPacking = false;
 
+            // Addressed to the outgoing mode's destinations, and written under
+            // a file stem applyMode() has already replaced, so there is nothing
+            // safe to do with these.
+            if (generation != self->mModeGeneration)
+            {
+                self->refreshControls();
+                return;
+            }
+
             if (!result->mOk)
             {
-                self->notifyUser(result->mError);
+                notifyUser(result->mError);
                 self->refreshControls();
                 return;
             }
@@ -1767,28 +1849,67 @@ void ALFloaterPBRPacker::onSaveLocationPicked(const std::vector<std::string>& fi
         return;
     }
 
+    LL::WorkQueue::ptr_t main_queue = LL::WorkQueue::getInstance("mainloop");
+    LL::WorkQueue::ptr_t general_queue = LL::WorkQueue::getInstance("General");
+    if (!main_queue || !general_queue)
+    {
+        notifyUser("Worker threads unavailable.");
+        return;
+    }
+
     // The picker gives us one filename; each packed map is written beside it
     // with its own suffix.
     const std::string chosen = filenames.front();
     const std::string directory = gDirUtilp->getDirName(chosen);
     const std::string base = gDirUtilp->getBaseFileName(chosen, true);
 
-    S32 written = 0;
+    // Off the main thread for the same reason the pack itself is: four 2048
+    // square PNG encodes inside a frame is a visible freeze. The job holds its
+    // own references, so re-packing or closing the floater mid-save is safe.
+    auto job = std::make_shared<SaveResult>();
+    job->mDirectory = directory;
     for (const ALPackOutput& output : mOutputs)
     {
-        const std::string path = gDirUtilp->add(directory,
-                                                base + "_" + sanitize_for_filename(output.mName) + ".png");
-
-        LLPointer<LLImagePNG> png = new LLImagePNG;
-        if (!png->encode(output.mImage, 0.f) || !png->save(path))
-        {
-            notifyUser("Could not write " + gDirUtilp->getBaseFileName(path));
-            return;
-        }
-        ++written;
+        job->mFiles.emplace_back(
+            gDirUtilp->add(directory, base + "_" + sanitize_for_filename(output.mName) + ".png"),
+            output.mImage);
     }
 
-    notifyUser(llformat("Wrote %d file%s to %s", written, written == 1 ? "" : "s", directory.c_str()));
+    const bool posted = main_queue->postTo(
+        general_queue,
+        [job]()
+        {
+            for (const auto& file : job->mFiles)
+            {
+                LLPointer<LLImagePNG> png = new LLImagePNG;
+                if (!png->encode(file.second, 0.f) || !png->save(file.first))
+                {
+                    job->mError = "Could not write " + gDirUtilp->getBaseFileName(file.first);
+                    return;
+                }
+                ++job->mWritten;
+            }
+        },
+        [job]()
+        {
+            // No floater handle: the result is a toast either way, so a save
+            // outlives the floater rather than being silently dropped.
+            if (!job->mError.empty())
+            {
+                notifyUser(job->mError);
+            }
+            else
+            {
+                notifyUser(llformat("Wrote %d file%s to %s",
+                                    job->mWritten, job->mWritten == 1 ? "" : "s",
+                                    job->mDirectory.c_str()));
+            }
+        });
+
+    if (!posted)
+    {
+        notifyUser("Could not queue the save.");
+    }
 }
 
 bool ALFloaterPBRPacker::writeLocalMaterialFile(std::string& path_out, std::string& error_out)
@@ -2010,9 +2131,17 @@ void ALFloaterPBRPacker::onApplyToSelection()
 
     // The legacy bumpiness and shininess presets are a separate, older
     // mechanism that fights a material's own maps, so clear them the way the
-    // build floater does when it assigns one.
-    LLSelectMgr::getInstance()->selectionSetBumpmap(0, LLUUID::null);
-    LLSelectMgr::getInstance()->selectionSetShiny(0, LLUUID::null);
+    // build floater does when it assigns one -- but only where this pack
+    // actually supplies the map that supersedes them. A diffuse-only pack has
+    // no business resetting a face's bumpiness.
+    if (normal_id.notNull())
+    {
+        LLSelectMgr::getInstance()->selectionSetBumpmap(0, LLUUID::null);
+    }
+    if (specular_id.notNull())
+    {
+        LLSelectMgr::getInstance()->selectionSetShiny(0, LLUUID::null);
+    }
 
     if (diffuse_id.notNull())
     {
@@ -2022,6 +2151,8 @@ void ALFloaterPBRPacker::onApplyToSelection()
     ALSpecGlossApplyFunctor functor;
     functor.mNormalID             = normal_id;
     functor.mSpecularID           = specular_id;
+    functor.mSetNormal            = normal_id.notNull();
+    functor.mSetSpecular          = specular_id.notNull();
     functor.mNeutralSpecularColor = specular_id.notNull();
 
     if (mMode == ALPackMode::PBR_FALLBACK)
@@ -2052,17 +2183,27 @@ void ALFloaterPBRPacker::onApplyToSelection()
 
     // The alpha mode has to match whatever was packed into the diffuse alpha,
     // since the same eight bits mean transparency or emission depending on it.
-    if (diffuseAlphaSlot() == ALPackSlot::EMISSIVE)
+    // Only decided where this pack supplies the diffuse map -- otherwise the
+    // mode belongs to whatever texture is already on the face -- but decided
+    // fully where it does, or an opaque map would inherit a stale blend mode.
+    if (diffuse_id.notNull())
     {
-        functor.mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE;
-    }
-    else if (outputHasAlpha(AL_SPECGLOSS_DIFFUSE))
-    {
-        // Keyed on what survived the pack rather than on a source having been
-        // supplied: a fully opaque alpha is dropped, and putting a face in the
-        // alpha render pass for transparency it does not have costs real frames
-        // in-world.
-        functor.mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_BLEND;
+        if (diffuseAlphaSlot() == ALPackSlot::EMISSIVE)
+        {
+            functor.mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE;
+        }
+        else if (outputHasAlpha(AL_SPECGLOSS_DIFFUSE))
+        {
+            // Keyed on what survived the pack rather than on a source having
+            // been supplied: a fully opaque alpha is dropped, and putting a face
+            // in the alpha render pass for transparency it does not have costs
+            // real frames in-world.
+            functor.mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_BLEND;
+        }
+        else
+        {
+            functor.mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_NONE;
+        }
     }
 
     LLSelectMgr::getInstance()->selectionSetMaterialParams(&functor);
