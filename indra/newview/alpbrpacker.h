@@ -38,6 +38,11 @@
 // stays free of viewer texture headers.
 constexpr S32 AL_PBR_PACK_MAX_DIM = 2048;
 
+// The glTF metallic-roughness dielectric F0, 0.04 linear, written as the sRGB
+// byte the legacy specular map is sampled as. 1.055 * 0.04^(1/2.4) - 0.055
+// is 0.2209, so 56.
+constexpr U8 AL_PACK_DIELECTRIC_F0_SRGB = 56;
+
 // Which of Second Life's two material systems a recipe targets. They are the
 // same channel-routing problem with different destinations, so they share the
 // engine entirely and differ only in their recipe table.
@@ -45,6 +50,7 @@ enum class ALPackMode : U8
 {
     GLTF_PBR = 0,   // base colour / normal / ORM / emissive
     SPEC_GLOSS,     // diffuse / normal+gloss / specular+environment
+    PBR_FALLBACK,   // glTF maps in, SpecGloss approximation out
     COUNT
 };
 
@@ -94,19 +100,22 @@ static_assert((size_t)AL_SPECGLOSS_COUNT <= AL_PACK_MAX_OUTPUTS,
               "SpecGloss gained a texture slot; widen AL_PACK_MAX_OUTPUTS");
 
 // Which channel of a source image feeds one output channel. LUMINANCE is for
-// the case where a creator hands us a colour image for a scalar map.
+// the case where a creator hands us a colour image for a scalar map; MAX_RGB
+// answers "is there anything here at all", which is what an emissive mask
+// wants -- a saturated red emitter has a low luminance but is fully emitting.
 enum class ALPackChannel : U8
 {
     RED = 0,
     GREEN,
     BLUE,
     ALPHA,
-    LUMINANCE
+    LUMINANCE,
+    MAX_RGB
 };
 
-// Binding for a single output channel: either a channel of an ingest slot, or
-// a flat constant. An unbound slot resolves to its neutral constant during
-// recipe resolution, so the pack loop never has to special-case a missing map.
+// One operand: either a channel of an ingest slot, or a flat constant. An
+// unbound slot resolves to a constant during recipe resolution, so the pack
+// loop never has to special-case a missing map.
 struct ALPackChannelSource
 {
     ALPackSlot    mSlot     = ALPackSlot::COUNT;    // COUNT means "use mConstant"
@@ -114,20 +123,72 @@ struct ALPackChannelSource
     bool          mInvert   = false;
     U8            mConstant = 255;
 
+    // What this operand becomes when its map is absent. Negative means "ask
+    // neutralValue()", which answers for how the *material* consumes the slot.
+    // An expression can consume the same slot differently and has to say so:
+    // metalness neutral-fills to white as an ORM channel, but as the factor
+    // interpolating towards a metal tint the safe absent value is black.
+    S16 mAbsent = -1;
+
     bool isConstant() const { return mSlot == ALPackSlot::COUNT; }
 
     static ALPackChannelSource constant(U8 value);
     static ALPackChannelSource from(ALPackSlot slot, ALPackChannel channel, bool invert = false);
+    // As from(), but with an explicit value for when the map is missing.
+    static ALPackChannelSource fromOr(ALPackSlot slot, ALPackChannel channel, U8 absent, bool invert = false);
 };
+
+enum class ALPackOp : U8
+{
+    COPY = 0,   // mA
+    LERP,       // mA + (mB - mA) * mT
+};
+
+// What one output channel evaluates to. Deliberately flat rather than a tree:
+// every conversion this needs is an interpolation with an optional modulator,
+// and keeping it flat keeps the UI's routing overlay a simple walk.
+struct ALPackChannelExpr
+{
+    ALPackChannelExpr() = default;
+
+    // Implicit, so a recipe that just routes a channel reads as it always did.
+    ALPackChannelExpr(const ALPackChannelSource& source) : mA(source) {}
+
+    ALPackOp            mOp = ALPackOp::COPY;
+    ALPackChannelSource mA;
+    ALPackChannelSource mB;
+    ALPackChannelSource mT;
+    // Multiplied into the result. Defaults to a constant 255, the identity, so
+    // it costs nothing where it is not wanted. This is how occlusion folds into
+    // a diffuse map without the expression needing to nest.
+    ALPackChannelSource mScale;
+
+    static ALPackChannelExpr lerp(const ALPackChannelSource& a,
+                                  const ALPackChannelSource& b,
+                                  const ALPackChannelSource& t);
+    ALPackChannelExpr& scaledBy(const ALPackChannelSource& scale);
+};
+
+// The operands of an expression, so resolution, sizing, conforming and the
+// UI's routing overlay each walk them without repeating the list.
+inline std::array<ALPackChannelSource*, 4> operandsOf(ALPackChannelExpr& expr)
+{
+    return { &expr.mA, &expr.mB, &expr.mT, &expr.mScale };
+}
+
+inline std::array<const ALPackChannelSource*, 4> operandsOf(const ALPackChannelExpr& expr)
+{
+    return { &expr.mA, &expr.mB, &expr.mT, &expr.mScale };
+}
 
 // One packed image to produce.
 struct ALPackTarget
 {
-    std::string                        mName;
-    ALPackDest                         mDest = 0;
-    S8                                 mComponents = 3;
-    std::array<ALPackChannelSource, 4> mChannels;
-    bool                               mEnabled = true;
+    std::string                      mName;
+    ALPackDest                       mDest = 0;
+    S8                               mComponents = 3;
+    std::array<ALPackChannelExpr, 4> mChannels;
+    bool                             mEnabled = true;
 };
 
 // The full packing description. Kept as a plain list so that adding a texture
@@ -145,6 +206,10 @@ public:
     // materials store. No JSON asset exists for these, so the outputs are
     // uploaded as loose textures and assigned per face.
     static ALPBRPackRecipe secondLifeSpecGloss();
+
+    // The same three legacy textures, approximated from glTF PBR maps, for a
+    // fallback material on content that also ships a PBR version.
+    static ALPBRPackRecipe secondLifeFallback();
 
     static ALPBRPackRecipe forMode(ALPackMode mode);
 

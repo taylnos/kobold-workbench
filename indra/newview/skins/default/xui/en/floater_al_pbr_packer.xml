@@ -61,6 +61,7 @@
      name="material_mode">
         <combo_box.item label="glTF PBR Material" name="pbr" value="0" />
         <combo_box.item label="SpecGloss Material" name="specgloss" value="1" />
+        <combo_box.item label="SpecGloss Fallback" name="fallback" value="2" />
     </combo_box>
 
     <!-- ============ Source Textures ============ -->
@@ -100,6 +101,7 @@
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
             <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
         <button follows="left|top" layout="topleft" left="100" top="144"
          width="24" height="22" is_toggle="true"
@@ -133,6 +135,7 @@
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
             <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
         <button follows="left|top" layout="topleft" left="100" top="144"
          width="24" height="22" is_toggle="true"
@@ -166,6 +169,7 @@
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
             <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
         <button follows="left|top" layout="topleft" left="100" top="144"
          width="24" height="22" is_toggle="true"
@@ -199,6 +203,7 @@
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
             <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
         <button follows="left|top" layout="topleft" left="100" top="144"
          width="24" height="22" is_toggle="true"
@@ -232,6 +237,7 @@
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
             <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
         <button follows="left|top" layout="topleft" left="100" top="144"
          width="24" height="22" is_toggle="true"
@@ -265,6 +271,7 @@
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
             <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
         <button follows="left|top" layout="topleft" left="100" top="144"
          width="24" height="22" is_toggle="true"
@@ -298,6 +305,7 @@
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
             <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
         <button follows="left|top" layout="topleft" left="100" top="144"
          width="24" height="22" is_toggle="true"

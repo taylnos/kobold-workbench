@@ -168,9 +168,9 @@ private:
     bool registerLocalTextures(std::string& error_out);
     bool hasLocalTextures() const;
 
-    // Whether the packed diffuse map kept an alpha channel, which decides
-    // whether the applied material needs a blend mode.
-    bool diffuseHasAlpha() const;
+    // Whether a packed map kept its alpha channel. Drives the applied alpha
+    // mode, where a dropped alpha honestly means "opaque".
+    bool outputHasAlpha(ALPackDest dest) const;
 
     // Take a fresh stem for the packed files. Called when the material type
     // changes so a re-pack cannot overwrite files a local asset still reads.

@@ -153,7 +153,7 @@ namespace tut
         {
             if (target.mDest == LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS)
             {
-                target.mChannels[1].mInvert = true;
+                target.mChannels[1].mA.mInvert = true;
             }
         }
 
@@ -466,5 +466,141 @@ namespace tut
 
         ALPBRPackRecipe pbr = ALPBRPackRecipe::forMode(ALPackMode::GLTF_PBR);
         ensure_equals("four glTF targets", (S32)pbr.mTargets.size(), 4);
+    }
+
+    // ---- SpecGloss fallback from PBR ---------------------------------------
+
+    // Occlusion multiplies into the diffuse map, which is the first conversion
+    // needing two sources in one channel.
+    template<> template<>
+    void pbrpacker_object::test<22>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeFallback();
+        mInputs[(size_t)ALPackSlot::BASE_COLOR] = make_image(32, 32, 3, 200, 200, 200);
+        mInputs[(size_t)ALPackSlot::OCCLUSION]  = make_image(32, 32, 1, 128);
+
+        ensure("pack succeeds", pack());
+
+        const ALPackOutput* diffuse = find_output(mOutputs, AL_SPECGLOSS_DIFFUSE);
+        ensure("diffuse produced", diffuse != nullptr);
+        // 200 * 128 / 255, rounded.
+        ensure_equals("occlusion multiplied in", (S32)pixel_at(diffuse->mImage, 0, 0), 100);
+
+        // With no emissive the mask resolves to a constant zero, which would be
+        // a fully transparent diffuse -- the floater rebinds this channel to
+        // opacity or to the base colour's own alpha. Pinned because that
+        // compensation is easy to lose.
+        ensure_equals("mask is zero without an emissive map", (S32)pixel_at(diffuse->mImage, 0, 3), 0);
+    }
+
+    // The emissive map has to be composited into the diffuse colour: the legacy
+    // renderer's only emission lerps the lit result towards the diffuse texel,
+    // so a red glow is red only if the diffuse texel is red.
+    template<> template<>
+    void pbrpacker_object::test<23>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeFallback();
+        mInputs[(size_t)ALPackSlot::BASE_COLOR] = make_image(32, 32, 3, 60, 60, 60);
+        mInputs[(size_t)ALPackSlot::EMISSIVE]   = make_image(32, 32, 3, 200, 0, 0);
+
+        ensure("pack succeeds", pack());
+
+        const ALPackOutput* diffuse = find_output(mOutputs, AL_SPECGLOSS_DIFFUSE);
+        ensure("diffuse produced", diffuse != nullptr);
+        // The mask is max(rgb), not luminance: a saturated red emitter has a
+        // luminance of 0.21 and would barely emit.
+        ensure_equals("mask is the max channel", (S32)pixel_at(diffuse->mImage, 0, 3), 200);
+        ensure_equals("red pulled towards the emissive", (S32)pixel_at(diffuse->mImage, 0, 0), 170);
+        ensure_equals("green pulled towards the emissive", (S32)pixel_at(diffuse->mImage, 0, 1), 13);
+    }
+
+    // Glossiness is exactly one minus roughness -- materialF.glsl states that
+    // (1 - glossiness) is what the legacy path treats as perceptual roughness.
+    template<> template<>
+    void pbrpacker_object::test<24>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeFallback();
+        mInputs[(size_t)ALPackSlot::NORMAL]    = make_image(32, 32, 3, 128, 128, 255);
+        mInputs[(size_t)ALPackSlot::ROUGHNESS] = make_image(32, 32, 1, 64);
+
+        ensure("pack succeeds", pack());
+
+        const ALPackOutput* normal = find_output(mOutputs, AL_SPECGLOSS_NORMAL);
+        ensure("normal produced", normal != nullptr);
+        ensure_equals("normal copied", (S32)pixel_at(normal->mImage, 0, 2), 255);
+        ensure_equals("glossiness is inverted roughness", (S32)pixel_at(normal->mImage, 0, 3), 191);
+    }
+
+    // An insulator takes the dielectric F0. Metalness is absent here, and its
+    // ORM neutral of white would make every surface fully metal -- so the
+    // expression overrides the absent value to black.
+    template<> template<>
+    void pbrpacker_object::test<25>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeFallback();
+        mInputs[(size_t)ALPackSlot::BASE_COLOR] = make_image(32, 32, 3, 200, 100, 50);
+
+        ensure("pack succeeds", pack());
+
+        const ALPackOutput* specular = find_output(mOutputs, AL_SPECGLOSS_SPECULAR);
+        ensure("specular produced", specular != nullptr);
+        ensure_equals("dielectric F0 red", (S32)pixel_at(specular->mImage, 0, 0), 56);
+        ensure_equals("dielectric F0 green", (S32)pixel_at(specular->mImage, 0, 1), 56);
+        ensure_equals("dielectric F0 blue", (S32)pixel_at(specular->mImage, 0, 2), 56);
+    }
+
+    // Metal takes the base colour as its specular tint, which is what makes
+    // applyGlossEnv() reflect the probe in the metal's own colour. The map
+    // carries no alpha: environment intensity is a clear coat here, not a
+    // metalness control, so the pack leaves it out and the apply zeroes it.
+    template<> template<>
+    void pbrpacker_object::test<26>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeFallback();
+        mInputs[(size_t)ALPackSlot::BASE_COLOR] = make_image(32, 32, 3, 200, 100, 50);
+        mInputs[(size_t)ALPackSlot::METALLIC]   = make_image(32, 32, 1, 255);
+
+        ensure("pack succeeds", pack());
+
+        const ALPackOutput* specular = find_output(mOutputs, AL_SPECGLOSS_SPECULAR);
+        ensure("specular produced", specular != nullptr);
+        ensure_equals("metal tints with base colour", (S32)pixel_at(specular->mImage, 0, 0), 200);
+        ensure_equals("metal tints with base colour", (S32)pixel_at(specular->mImage, 0, 1), 100);
+        ensure_equals("no environment channel", (S32)specular->mImage->getComponents(), 3);
+    }
+
+    // Half metal interpolates between the two, and the whole set comes out of
+    // one pack.
+    template<> template<>
+    void pbrpacker_object::test<27>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeFallback();
+        mInputs[(size_t)ALPackSlot::BASE_COLOR] = make_image(16, 16, 3, 255, 255, 255);
+        mInputs[(size_t)ALPackSlot::NORMAL]     = make_image(16, 16, 3, 128, 128, 255);
+        mInputs[(size_t)ALPackSlot::METALLIC]   = make_image(16, 16, 1, 128);
+
+        ensure("pack succeeds", pack());
+        ensure_equals("three legacy uploads", (S32)mOutputs.size(), 3);
+
+        const ALPackOutput* specular = find_output(mOutputs, AL_SPECGLOSS_SPECULAR);
+        ensure("specular produced", specular != nullptr);
+        // lerp(56, 255, 128) rounded.
+        ensure_equals("half metal lands between F0 and base colour",
+                      (S32)pixel_at(specular->mImage, 0, 0), 156);
+    }
+
+    // MAX_RGB answers "is anything here", where luminance answers "how bright".
+    template<> template<>
+    void pbrpacker_object::test<28>()
+    {
+        const U8 red[4] = { 255, 0, 0, 255 };
+        ensure_equals("max of a saturated red is full",
+                      (S32)ALPBRPacker::sampleChannel(red, 3, ALPackChannel::MAX_RGB), 255);
+        ensure_equals("luminance of the same red is not",
+                      (S32)ALPBRPacker::sampleChannel(red, 3, ALPackChannel::LUMINANCE), 53);
+
+        const U8 gray[1] = { 90 };
+        ensure_equals("single channel falls back to red",
+                      (S32)ALPBRPacker::sampleChannel(gray, 1, ALPackChannel::MAX_RGB), 90);
     }
 }

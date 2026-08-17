@@ -53,6 +53,33 @@ ALPackChannelSource ALPackChannelSource::from(ALPackSlot slot, ALPackChannel cha
 }
 
 // static
+ALPackChannelSource ALPackChannelSource::fromOr(ALPackSlot slot, ALPackChannel channel, U8 absent, bool invert)
+{
+    ALPackChannelSource src = from(slot, channel, invert);
+    src.mAbsent = (S16)absent;
+    return src;
+}
+
+// static
+ALPackChannelExpr ALPackChannelExpr::lerp(const ALPackChannelSource& a,
+                                          const ALPackChannelSource& b,
+                                          const ALPackChannelSource& t)
+{
+    ALPackChannelExpr expr;
+    expr.mOp = ALPackOp::LERP;
+    expr.mA = a;
+    expr.mB = b;
+    expr.mT = t;
+    return expr;
+}
+
+ALPackChannelExpr& ALPackChannelExpr::scaledBy(const ALPackChannelSource& scale)
+{
+    mScale = scale;
+    return *this;
+}
+
+// static
 ALPBRPackRecipe ALPBRPackRecipe::secondLifeDefault()
 {
     ALPBRPackRecipe recipe;
@@ -170,9 +197,121 @@ ALPBRPackRecipe ALPBRPackRecipe::secondLifeSpecGloss()
 }
 
 // static
+ALPBRPackRecipe ALPBRPackRecipe::secondLifeFallback()
+{
+    ALPBRPackRecipe recipe;
+
+    // Approximates a glTF PBR material with the three legacy textures, for
+    // content that ships both. Every figure below is read off
+    // class3/deferred/materialF.glsl rather than off the archived Khronos
+    // spec-gloss conversion, because Second Life's legacy path is Blinn-Phong
+    // with a probe reflection, not a spec-gloss microfacet model.
+
+    // Diffuse. The emissive map has to be composited into the diffuse colour,
+    // because the legacy renderer's only emission is
+    // "color = mix(color, diffcol.rgb, emissive)" -- the mask lerps the lit
+    // result towards the raw diffuse texel, so a red glow is only red if the
+    // diffuse texel is red. Occlusion rides in as the scale, which also means
+    // it modulates the emissive; that is wrong by the book and invisible in
+    // practice, and it keeps the expression flat.
+    //
+    // The mask is MAX_RGB rather than luminance: a saturated red emitter has a
+    // luminance of 0.21 and would come out barely emitting.
+    {
+        ALPackTarget target;
+        target.mName = "Diffuse";
+        target.mDest = AL_SPECGLOSS_DIFFUSE;
+        target.mComponents = 4;
+
+        const ALPackChannelSource mask =
+            ALPackChannelSource::fromOr(ALPackSlot::EMISSIVE, ALPackChannel::MAX_RGB, 0);
+        const ALPackChannelSource occlusion =
+            ALPackChannelSource::from(ALPackSlot::OCCLUSION, ALPackChannel::RED);
+
+        for (S8 c = 0; c < 3; ++c)
+        {
+            const ALPackChannel channel = (ALPackChannel)((U8)ALPackChannel::RED + c);
+            target.mChannels[c] = ALPackChannelExpr::lerp(
+                ALPackChannelSource::from(ALPackSlot::BASE_COLOR, channel),
+                ALPackChannelSource::from(ALPackSlot::EMISSIVE, channel),
+                mask).scaledBy(occlusion);
+        }
+
+        // Alpha is the emissive mask, so the face wants DIFFUSE_ALPHA_MODE_
+        // EMISSIVE. With no emissive map this resolves to a constant zero and
+        // the floater rebinds it to opacity instead.
+        target.mChannels[3] = mask;
+        recipe.mTargets.push_back(target);
+    }
+
+    // Normal is a straight copy, and glossiness is exactly one minus
+    // roughness: materialF.glsl states that (1 - glossiness) is what the
+    // legacy path treats as perceptual roughness, and feeds that same number
+    // to sampleReflectionProbesLegacy to pick the probe mip. glTF roughness is
+    // perceptual too, so the two domains line up with no curve fitting.
+    //
+    // An absent roughness map inverts its white neutral to zero glossiness,
+    // which matches glTF defaulting roughnessFactor to fully rough.
+    {
+        ALPackTarget target;
+        target.mName = "Normal";
+        target.mDest = AL_SPECGLOSS_NORMAL;
+        target.mComponents = 4;
+        target.mChannels[0] = ALPackChannelSource::from(ALPackSlot::NORMAL, ALPackChannel::RED);
+        target.mChannels[1] = ALPackChannelSource::from(ALPackSlot::NORMAL, ALPackChannel::GREEN);
+        target.mChannels[2] = ALPackChannelSource::from(ALPackSlot::NORMAL, ALPackChannel::BLUE);
+        target.mChannels[3] = ALPackChannelSource::from(ALPackSlot::ROUGHNESS, ALPackChannel::RED, true);
+        recipe.mTargets.push_back(target);
+    }
+
+    // Specular is the metallic-roughness F0: dielectric 0.04 for insulators,
+    // the base colour for metal. The map is sampled as sRGB -- the deferred
+    // writer re-encodes with linear_to_srgb before storing it -- so the
+    // dielectric constant is written in sRGB, not as 10/255.
+    //
+    // No alpha, so no environment intensity. That looks like the obvious home
+    // for metalness and is not: applyLegacyEnv() takes the specular value and
+    // never reads it, then does
+    //     color = mix(color, reflected_color*0.5, envIntensity)
+    // -- an untinted probe mixed *over* the surface colour, which is a clear
+    // coat. Driving it from metalness washes a red metal towards grey sky.
+    // The metal reflection comes from applyGlossEnv() instead, which multiplies
+    // the probe by this map's rgb and is gated on glossiness alone, so a
+    // polished metal already reflects in its own colour with the environment
+    // slider at zero.
+    {
+        ALPackTarget target;
+        target.mName = "Specular";
+        target.mDest = AL_SPECGLOSS_SPECULAR;
+        target.mComponents = 3;
+
+        const ALPackChannelSource metallic =
+            ALPackChannelSource::fromOr(ALPackSlot::METALLIC, ALPackChannel::RED, 0);
+
+        for (S8 c = 0; c < 3; ++c)
+        {
+            const ALPackChannel channel = (ALPackChannel)((U8)ALPackChannel::RED + c);
+            target.mChannels[c] = ALPackChannelExpr::lerp(
+                ALPackChannelSource::constant(AL_PACK_DIELECTRIC_F0_SRGB),
+                ALPackChannelSource::from(ALPackSlot::BASE_COLOR, channel),
+                metallic);
+        }
+
+        recipe.mTargets.push_back(target);
+    }
+
+    return recipe;
+}
+
+// static
 ALPBRPackRecipe ALPBRPackRecipe::forMode(ALPackMode mode)
 {
-    return (mode == ALPackMode::SPEC_GLOSS) ? secondLifeSpecGloss() : secondLifeDefault();
+    switch (mode)
+    {
+    case ALPackMode::SPEC_GLOSS:   return secondLifeSpecGloss();
+    case ALPackMode::PBR_FALLBACK: return secondLifeFallback();
+    default:                       return secondLifeDefault();
+    }
 }
 
 U8 ALPBRPacker::sampleChannel(const U8* pixel, S8 components, ALPackChannel channel)
@@ -194,12 +333,80 @@ U8 ALPBRPacker::sampleChannel(const U8* pixel, S8 components, ALPackChannel chan
         }
         // Rec. 709 luma, fixed point: 0.2126 / 0.7152 / 0.0722 scaled by 256.
         return (U8)(((U32)pixel[0] * 54 + (U32)pixel[1] * 183 + (U32)pixel[2] * 19) >> 8);
+    case ALPackChannel::MAX_RGB:
+        if (components < 3)
+        {
+            return pixel[0];
+        }
+        return llmax(pixel[0], llmax(pixel[1], pixel[2]));
     }
     return pixel[0];
 }
 
 namespace
 {
+    // a * b / 255, rounded. 255 is the identity, which is what makes an absent
+    // scale free and an absent occlusion map a no-op.
+    inline U8 scaleByte(U8 a, U8 b)
+    {
+        return (b == 255) ? a : (U8)(((U32)a * (U32)b + 127u) / 255u);
+    }
+
+    inline U8 lerpByte(U8 a, U8 b, U8 t)
+    {
+        if (t == 0)   { return a; }
+        if (t == 255) { return b; }
+        return (U8)(((U32)a * (255u - t) + (U32)b * t + 127u) / 255u);
+    }
+
+    // A resolved operand: either a constant, or a channel of one conformed
+    // image. Bound once per output channel rather than per pixel.
+    struct Operand
+    {
+        const U8*     mData = nullptr;      // null: mConstant
+        S8            mComponents = 0;
+        ALPackChannel mChannel = ALPackChannel::RED;
+        bool          mInvert = false;
+        U8            mConstant = 255;
+
+        U8 sample(U32 index) const
+        {
+            if (!mData)
+            {
+                return mConstant;
+            }
+            const U8 value = ALPBRPacker::sampleChannel(mData + (size_t)index * mComponents,
+                                                        mComponents, mChannel);
+            return mInvert ? (U8)(255 - value) : value;
+        }
+    };
+
+    Operand bindOperand(const ALPackChannelSource& source,
+                        const std::array<LLPointer<LLImageRaw>, (size_t)ALPackSlot::COUNT>& conformed)
+    {
+        Operand operand;
+
+        if (source.isConstant())
+        {
+            operand.mConstant = source.mInvert ? (U8)(255 - source.mConstant) : source.mConstant;
+            return operand;
+        }
+
+        const LLPointer<LLImageRaw>& image = conformed[(size_t)source.mSlot];
+        if (image.isNull())
+        {
+            // Resolution already replaced every absent slot with a constant, so
+            // this cannot happen; fall back to the identity rather than
+            // dereferencing null if a future recipe finds a way.
+            return operand;
+        }
+
+        operand.mData       = image->getData();
+        operand.mComponents = image->getComponents();
+        operand.mChannel    = source.mChannel;
+        operand.mInvert     = source.mInvert;
+        return operand;
+    }
 
     // Promote gray+alpha to RGBA. LLImageRaw::scale() only accepts 1, 3 or 4
     // components, so a 2-component decode would fail to resize later.
@@ -356,33 +563,40 @@ bool ALPBRPacker::pack(const ALPackInputSet& inputs,
             return false;
         }
 
-        // Resolve the bindings. A channel whose source map was not supplied
-        // becomes its neutral constant, so the fill loop below never has to
-        // reason about missing inputs.
-        std::array<ALPackChannelSource, 4> resolved = target.mChannels;
+        // Resolve the bindings. An operand whose source map was not supplied
+        // becomes a constant, so the fill loop below never has to reason about
+        // missing inputs -- and because that constant is the identity for how
+        // the operand is used, a whole conversion degrades gracefully as maps
+        // are left out.
+        std::array<ALPackChannelExpr, 4> resolved = target.mChannels;
         bool any_real_source = false;
         for (S8 c = 0; c < components; ++c)
         {
-            ALPackChannelSource& source = resolved[c];
-            if (source.isConstant())
+            for (ALPackChannelSource* source : operandsOf(resolved[c]))
             {
-                continue;
-            }
+                if (source->isConstant())
+                {
+                    continue;
+                }
 
-            const LLPointer<LLImageRaw>& image = inputs[(size_t)source.mSlot];
-            if (image.isNull() || image->isBufferInvalid())
-            {
-                source = ALPackChannelSource::constant(neutralValue(source.mSlot, source.mChannel));
-            }
-            else
-            {
-                any_real_source = true;
+                const LLPointer<LLImageRaw>& image = inputs[(size_t)source->mSlot];
+                if (image.isNull() || image->isBufferInvalid())
+                {
+                    const U8 absent = (source->mAbsent >= 0)
+                                    ? (U8)source->mAbsent
+                                    : neutralValue(source->mSlot, source->mChannel);
+                    *source = ALPackChannelSource::constant(absent);
+                }
+                else
+                {
+                    any_real_source = true;
+                }
             }
         }
 
         // Nothing real contributes, so the whole texture would be a flat
-        // neutral. glTF treats an absent texture as that same identity, so
-        // omit it and save the upload.
+        // neutral. Both material systems treat an absent texture as that same
+        // identity, so omit it and save the upload.
         if (!any_real_source)
         {
             continue;
@@ -395,13 +609,16 @@ bool ALPBRPacker::pack(const ALPackInputSet& inputs,
         S32 height = 0;
         for (S8 c = 0; c < components; ++c)
         {
-            if (resolved[c].isConstant())
+            for (const ALPackChannelSource* source : operandsOf(resolved[c]))
             {
-                continue;
+                if (source->isConstant())
+                {
+                    continue;
+                }
+                const LLPointer<LLImageRaw>& image = inputs[(size_t)source->mSlot];
+                width = llmax(width, (S32)image->getWidth());
+                height = llmax(height, (S32)image->getHeight());
             }
-            const LLPointer<LLImageRaw>& image = inputs[(size_t)resolved[c].mSlot];
-            width = llmax(width, (S32)image->getWidth());
-            height = llmax(height, (S32)image->getHeight());
         }
 
         width = LLImageRaw::biasedDimToPowerOfTwo(width, max_dim);
@@ -417,31 +634,34 @@ bool ALPBRPacker::pack(const ALPackInputSet& inputs,
         std::array<LLPointer<LLImageRaw>, (size_t)ALPackSlot::COUNT> conformed;
         for (S8 c = 0; c < components; ++c)
         {
-            if (resolved[c].isConstant())
+            for (const ALPackChannelSource* source : operandsOf(resolved[c]))
             {
-                continue;
-            }
-
-            const size_t slot = (size_t)resolved[c].mSlot;
-            if (conformed[slot].notNull())
-            {
-                continue;
-            }
-
-            // Non-const copy of the pointer: LLPointer propagates constness
-            // through operator->, and scaled() is non-const.
-            LLPointer<LLImageRaw> image = inputs[slot];
-            if (image->getWidth() == width && image->getHeight() == height)
-            {
-                conformed[slot] = image;
-            }
-            else
-            {
-                conformed[slot] = image->scaled(width, height);
-                if (conformed[slot].isNull() || conformed[slot]->isBufferInvalid())
+                if (source->isConstant())
                 {
-                    err = target.mName + ": could not resize " + slotName(resolved[c].mSlot);
-                    return false;
+                    continue;
+                }
+
+                const size_t slot = (size_t)source->mSlot;
+                if (conformed[slot].notNull())
+                {
+                    continue;
+                }
+
+                // Non-const copy of the pointer: LLPointer propagates constness
+                // through operator->, and scaled() is non-const.
+                LLPointer<LLImageRaw> image = inputs[slot];
+                if (image->getWidth() == width && image->getHeight() == height)
+                {
+                    conformed[slot] = image;
+                }
+                else
+                {
+                    conformed[slot] = image->scaled(width, height);
+                    if (conformed[slot].isNull() || conformed[slot]->isBufferInvalid())
+                    {
+                        err = target.mName + ": could not resize " + slotName(source->mSlot);
+                        return false;
+                    }
                 }
             }
         }
@@ -454,17 +674,37 @@ bool ALPBRPacker::pack(const ALPackInputSet& inputs,
         }
 
         {
+            // Every contributing image is locked for the whole fill: an
+            // expression reads several at once, so they cannot be locked one
+            // channel at a time as a plain routing pass could.
+            std::vector<std::unique_ptr<LLImageDataSharedLock>> src_locks;
+            for (const LLPointer<LLImageRaw>& image : conformed)
+            {
+                if (image.notNull())
+                {
+                    src_locks.push_back(std::make_unique<LLImageDataSharedLock>(image));
+                }
+            }
+
             LLImageDataLock lock_dst(packed);
             U8* dst = packed->getData();
             const U32 pixel_count = (U32)width * (U32)height;
 
             for (S8 c = 0; c < components; ++c)
             {
-                const ALPackChannelSource& source = resolved[c];
+                const ALPackChannelExpr& expr = resolved[c];
 
-                if (source.isConstant())
+                const Operand a     = bindOperand(expr.mA, conformed);
+                const Operand b     = bindOperand(expr.mB, conformed);
+                const Operand t     = bindOperand(expr.mT, conformed);
+                const Operand scale = bindOperand(expr.mScale, conformed);
+
+                // A plain constant copy is the common case by far -- every
+                // neutral fill lands here -- so keep it a flat memset-alike
+                // rather than paying for the general evaluator per pixel.
+                if (expr.mOp == ALPackOp::COPY && a.mData == nullptr && scale.mData == nullptr)
                 {
-                    const U8 value = source.mInvert ? (U8)(255 - source.mConstant) : source.mConstant;
+                    const U8 value = scaleByte(a.mConstant, scale.mConstant);
                     for (U32 i = 0; i < pixel_count; ++i)
                     {
                         dst[i * components + c] = value;
@@ -472,16 +712,14 @@ bool ALPBRPacker::pack(const ALPackInputSet& inputs,
                     continue;
                 }
 
-                const LLPointer<LLImageRaw>& src_image = conformed[(size_t)source.mSlot];
-                LLImageDataSharedLock lock_src(src_image);
-
-                const U8* src = src_image->getData();
-                const S8 src_components = src_image->getComponents();
-
                 for (U32 i = 0; i < pixel_count; ++i)
                 {
-                    const U8 value = sampleChannel(src + (size_t)i * src_components, src_components, source.mChannel);
-                    dst[i * components + c] = source.mInvert ? (U8)(255 - value) : value;
+                    U8 value = a.sample(i);
+                    if (expr.mOp == ALPackOp::LERP)
+                    {
+                        value = lerpByte(value, b.sample(i), t.sample(i));
+                    }
+                    dst[i * components + c] = scaleByte(value, scale.sample(i));
                 }
             }
         }

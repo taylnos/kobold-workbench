@@ -146,18 +146,23 @@ namespace
     static_assert(LL_ARRAY_SIZE(sPBROutputs) <= OUTPUT_CARD_COUNT, "not enough packed cards in the XUI");
     static_assert(LL_ARRAY_SIZE(sSpecGlossOutputs) <= OUTPUT_CARD_COUNT, "not enough packed cards in the XUI");
 
+    // The fallback mode ingests glTF maps and emits legacy textures, so it
+    // takes one half of its UI from each of the other two.
+    bool ingests_pbr(ALPackMode mode)  { return mode != ALPackMode::SPEC_GLOSS; }
+    bool packs_legacy(ALPackMode mode) { return mode != ALPackMode::GLTF_PBR; }
+
     void mode_slots(ALPackMode mode, const SlotDef*& defs, size_t& count)
     {
-        const bool spec_gloss = (mode == ALPackMode::SPEC_GLOSS);
-        defs  = spec_gloss ? sSpecGlossSlots : sPBRSlots;
-        count = spec_gloss ? LL_ARRAY_SIZE(sSpecGlossSlots) : LL_ARRAY_SIZE(sPBRSlots);
+        const bool pbr = ingests_pbr(mode);
+        defs  = pbr ? sPBRSlots : sSpecGlossSlots;
+        count = pbr ? LL_ARRAY_SIZE(sPBRSlots) : LL_ARRAY_SIZE(sSpecGlossSlots);
     }
 
     void mode_outputs(ALPackMode mode, const OutputDef*& defs, size_t& count)
     {
-        const bool spec_gloss = (mode == ALPackMode::SPEC_GLOSS);
-        defs  = spec_gloss ? sSpecGlossOutputs : sPBROutputs;
-        count = spec_gloss ? LL_ARRAY_SIZE(sSpecGlossOutputs) : LL_ARRAY_SIZE(sPBROutputs);
+        const bool legacy = packs_legacy(mode);
+        defs  = legacy ? sSpecGlossOutputs : sPBROutputs;
+        count = legacy ? LL_ARRAY_SIZE(sSpecGlossOutputs) : LL_ARRAY_SIZE(sPBROutputs);
     }
 
     struct LoadResult
@@ -196,10 +201,13 @@ namespace
     {
         LLUUID mNormalID;
         LLUUID mSpecularID;
-        U8     mAlphaMode      = LLMaterial::DIFFUSE_ALPHA_MODE_NONE;
-        bool   mPackedGloss    = false;
-        bool   mPackedEnv      = false;
-        bool   mPackedSpecular = false;
+        U8     mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_NONE;
+        // Negative leaves whatever the face already carries. A pack has to be
+        // able to force these to zero as well as to full: the fallback wants
+        // the environment slider off, not merely untouched.
+        S16    mSpecularExponent = -1;
+        S16    mEnvIntensity = -1;
+        bool   mNeutralSpecularColor = false;
 
         LLMaterialPtr apply(LLViewerObject* object, S32 face, LLTextureEntry* tep,
                             LLMaterialPtr& current_material) override
@@ -212,21 +220,21 @@ namespace
             material->setSpecularID(mSpecularID);
             material->setDiffuseAlphaMode(mAlphaMode);
 
-            // Both of these default to a value that would multiply the packed
+            // Both sliders default to a value that would multiply a packed
             // channel away -- the specular exponent to 0.2 and the environment
-            // intensity to zero -- so drive them to full wherever a real map
-            // was packed. Same argument as the neutral fills: the map is the
-            // detail, the slider is the amount, and the amount has to start at
-            // "all of it" for the map to be visible at all.
-            if (mPackedGloss)
+            // intensity to zero -- so a pack that fills one has to open it up.
+            // Same argument as the neutral fills: the map is the detail, the
+            // slider is the amount, and the amount has to start at "all of it"
+            // for the map to be visible at all.
+            if (mSpecularExponent >= 0)
             {
-                material->setSpecularLightExponent(255);
+                material->setSpecularLightExponent((U8)mSpecularExponent);
             }
-            if (mPackedEnv)
+            if (mEnvIntensity >= 0)
             {
-                material->setEnvironmentIntensity(255);
+                material->setEnvironmentIntensity((U8)mEnvIntensity);
             }
-            if (mPackedSpecular)
+            if (mNeutralSpecularColor)
             {
                 material->setSpecularLightColor(LLColor4U::white);
             }
@@ -431,6 +439,28 @@ namespace
             {
                 warnings.push_back("Normal green averages low, which suggests a DirectX-convention map.");
             }
+        }
+
+        if (mode == ALPackMode::PBR_FALLBACK)
+        {
+            if (inputs[(size_t)ALPackSlot::EMISSIVE].notNull())
+            {
+                // Not a nicety: the legacy renderer's only emission lerps the
+                // lit result towards the diffuse texel, so the glow colour has
+                // to be the diffuse colour, which spends the alpha channel.
+                warnings.push_back("Emissive is composited into the diffuse map and takes its alpha, so this material cannot also be transparent.");
+            }
+
+            // No warning for metalness. Keeping the base colour in the diffuse
+            // map is the whole point rather than a compromise to flag: dropping
+            // it the way the metallic-roughness model says to leaves a black
+            // sphere, because the Blinn-Phong lobe cannot carry a surface on
+            // its own and the environment term is a clear coat.
+            if (inputs[(size_t)ALPackSlot::ROUGHNESS].isNull())
+            {
+                warnings.push_back("No roughness map, so glossiness packs as fully rough.");
+            }
+            return;
         }
 
         if (mode == ALPackMode::SPEC_GLOSS)
@@ -808,13 +838,16 @@ void ALFloaterPBRPacker::applyMode(ALPackMode mode)
         mActiveOutputs.push_back(def.mDest);
     }
 
-    const bool spec_gloss = (mode == ALPackMode::SPEC_GLOSS);
+    // The preset combo follows the ingest side, the action buttons the output
+    // side -- which is exactly how the fallback mode splits.
+    const bool spec_gloss = !ingests_pbr(mode);
+    const bool legacy = packs_legacy(mode);
 
     mPresetCombo->setVisible(!spec_gloss);
     mPresetSGCombo->setVisible(spec_gloss);
-    mMakeLocalBtn->setVisible(!spec_gloss);
-    mSendToEditorBtn->setVisible(!spec_gloss);
-    mApplyToSelectionBtn->setVisible(spec_gloss);
+    mMakeLocalBtn->setVisible(!legacy);
+    mSendToEditorBtn->setVisible(!legacy);
+    mApplyToSelectionBtn->setVisible(legacy);
 
     if (spec_gloss)
     {
@@ -850,8 +883,8 @@ void ALFloaterPBRPacker::onModeChanged()
     }
 
     const S32 value = mModeCombo->getValue().asInteger();
-    const ALPackMode mode = (value == (S32)ALPackMode::SPEC_GLOSS) ? ALPackMode::SPEC_GLOSS
-                                                                   : ALPackMode::GLTF_PBR;
+    const ALPackMode mode = (value > 0 && value < (S32)ALPackMode::COUNT) ? (ALPackMode)value
+                                                                          : ALPackMode::GLTF_PBR;
     if (mode != mMode)
     {
         applyMode(mode);
@@ -884,6 +917,7 @@ ALPackChannel ALFloaterPBRPacker::channelFromIndex(S32 index)
     case 2:  return ALPackChannel::BLUE;
     case 3:  return ALPackChannel::ALPHA;
     case 4:  return ALPackChannel::LUMINANCE;
+    case 5:  return ALPackChannel::MAX_RGB;
     default: return ALPackChannel::RED;
     }
 }
@@ -1072,7 +1106,7 @@ void ALFloaterPBRPacker::onFilesPicked(const std::vector<std::string>& filenames
     std::vector<std::string> unmatched;
     S32 assigned = 0;
 
-    const bool spec_gloss = (mMode == ALPackMode::SPEC_GLOSS);
+    const bool spec_gloss = !ingests_pbr(mMode);
     const SlotHint* hints = spec_gloss ? sSpecGlossHints : sPBRHints;
     const size_t hint_count = spec_gloss ? LL_ARRAY_SIZE(sSpecGlossHints) : LL_ARRAY_SIZE(sPBRHints);
 
@@ -1377,12 +1411,12 @@ void ALFloaterPBRPacker::onSettingChanged()
 
 ALPackSlot ALFloaterPBRPacker::diffuseAlphaSlot() const
 {
-    // In SpecGloss an emissive mask is a diffuse-alpha payload, where in glTF
-    // it is a colour map of its own -- so only one mode has this contest. It
-    // wins over opacity because loading a map into a slot that exists purely to
-    // ride in alpha is the more deliberate act; collect_warnings() says so when
-    // both are supplied.
-    if (mMode == ALPackMode::SPEC_GLOSS && mInputs[(size_t)ALPackSlot::EMISSIVE].notNull())
+    // Wherever a legacy diffuse map is the output, emission lives in its alpha
+    // and so competes with opacity for the one channel; in glTF the emissive is
+    // a colour map of its own and there is no contest. Emission wins, because
+    // it is the payload that cannot go anywhere else, and collect_warnings()
+    // says so when both are supplied.
+    if (packs_legacy(mMode) && mInputs[(size_t)ALPackSlot::EMISSIVE].notNull())
     {
         return ALPackSlot::EMISSIVE;
     }
@@ -1402,33 +1436,45 @@ ALPBRPackRecipe ALFloaterPBRPacker::buildRecipe() const
     // Overlay the routing UI onto whatever the mode's recipe binds. Done by
     // walking the recipe rather than by naming targets and channel indices, so
     // a slot picks up its channel choice and inversion wherever the recipe
-    // happens to read it -- which is what lets the same seven cards drive two
-    // completely different texture sets.
+    // happens to read it -- which is what lets the same seven cards drive three
+    // completely different texture sets, and what makes the packed-ORM preset
+    // work in the fallback mode for free.
     for (ALPackTarget& target : recipe.mTargets)
     {
         for (S8 c = 0; c < target.mComponents; ++c)
         {
-            ALPackChannelSource& channel = target.mChannels[c];
-            if (channel.isConstant())
+            for (ALPackChannelSource* channel : operandsOf(target.mChannels[c]))
             {
-                continue;
-            }
+                if (channel->isConstant())
+                {
+                    continue;
+                }
 
-            const SlotUI& ui = mSlotUI[(size_t)channel.mSlot];
-            if (ui.mChannel)
-            {
-                // A scalar map: the card says which channel to read and whether
-                // to flip it, and that answer is the same everywhere it feeds.
-                channel.mChannel = channelFromIndex(ui.mChannel->getValue().asInteger());
-                channel.mInvert  = slotInverted(channel.mSlot);
-            }
-            else if (slotInverted(channel.mSlot))
-            {
-                // A colour map read as RGB: its one toggle is the green flip
-                // that corrects a DirectX-convention normal, so it applies to
-                // green alone. Second Life reads normals the same way glTF
-                // does, so this is right in both modes.
-                channel.mInvert = (channel.mChannel == ALPackChannel::GREEN);
+                const SlotUI& ui = mSlotUI[(size_t)channel->mSlot];
+
+                // Inversion composes rather than overwrites. The recipe states
+                // the transform the destination needs and the card states what
+                // the file already is, so the two have to XOR: the fallback
+                // inverts roughness to reach glossiness, and a creator who
+                // supplies a gloss map there wants no inversion at all, not
+                // two.
+                const bool ui_invert = slotInverted(channel->mSlot);
+
+                if (ui.mChannel)
+                {
+                    // A scalar map: the card says which channel to read, and
+                    // that answer is the same everywhere it feeds.
+                    channel->mChannel = channelFromIndex(ui.mChannel->getValue().asInteger());
+                    channel->mInvert  = (channel->mInvert != ui_invert);
+                }
+                else if (ui_invert)
+                {
+                    // A colour map read as RGB: its one toggle is the green
+                    // flip that corrects a DirectX-convention normal, so it
+                    // applies to green alone. Second Life reads normals the
+                    // same way glTF does, so this holds in every mode.
+                    channel->mInvert = (channel->mInvert != (channel->mChannel == ALPackChannel::GREEN));
+                }
             }
         }
     }
@@ -1437,19 +1483,36 @@ ALPBRPackRecipe ALFloaterPBRPacker::buildRecipe() const
     // Without one the recipe keeps the colour image's own alpha, which is what
     // a creator exporting a single RGBA base colour expects.
     const ALPackSlot alpha_slot = diffuseAlphaSlot();
-    if (alpha_slot != ALPackSlot::COUNT)
-    {
-        const ALPackDest colour_dest = (mMode == ALPackMode::SPEC_GLOSS)
-                                     ? (ALPackDest)AL_SPECGLOSS_DIFFUSE
-                                     : (ALPackDest)LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR;
+    const ALPackDest colour_dest = packs_legacy(mMode)
+                                 ? (ALPackDest)AL_SPECGLOSS_DIFFUSE
+                                 : (ALPackDest)LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR;
 
-        if (ALPackTarget* colour = find_target(recipe, colour_dest))
+    if (ALPackTarget* colour = find_target(recipe, colour_dest))
+    {
+        const bool fallback_mask = (mMode == ALPackMode::PBR_FALLBACK &&
+                                    alpha_slot == ALPackSlot::EMISSIVE);
+
+        if (fallback_mask)
+        {
+            // Left alone: the fallback recipe already binds this to the
+            // max-RGB emissive mask that matches what it composited into RGB,
+            // which a plain single-channel rebinding would throw away.
+        }
+        else if (alpha_slot != ALPackSlot::COUNT)
         {
             const SlotUI& ui = mSlotUI[(size_t)alpha_slot];
             colour->mChannels[3] = ALPackChannelSource::from(
                 alpha_slot,
                 ui.mChannel ? channelFromIndex(ui.mChannel->getValue().asInteger()) : ALPackChannel::RED,
                 slotInverted(alpha_slot));
+        }
+        else if (mMode == ALPackMode::PBR_FALLBACK)
+        {
+            // No emissive and no opacity, so the recipe's mask resolves to a
+            // constant zero -- a fully transparent diffuse. Fall back to the
+            // base colour's own alpha, which is what the other modes default to.
+            colour->mChannels[3] = ALPackChannelSource::from(ALPackSlot::BASE_COLOR,
+                                                             ALPackChannel::ALPHA);
         }
     }
 
@@ -1863,7 +1926,7 @@ bool ALFloaterPBRPacker::registerLocalTextures(std::string& error_out)
 
 void ALFloaterPBRPacker::onApplyToSelection()
 {
-    if (mMode != ALPackMode::SPEC_GLOSS || mOutputs.empty())
+    if (!packs_legacy(mMode) || mOutputs.empty())
     {
         return;
     }
@@ -1899,11 +1962,35 @@ void ALFloaterPBRPacker::onApplyToSelection()
     }
 
     ALSpecGlossApplyFunctor functor;
-    functor.mNormalID       = normal_id;
-    functor.mSpecularID     = specular_id;
-    functor.mPackedGloss    = mInputs[(size_t)ALPackSlot::GLOSSINESS].notNull();
-    functor.mPackedEnv      = mInputs[(size_t)ALPackSlot::SPECULAR_ENV].notNull();
-    functor.mPackedSpecular = mInputs[(size_t)ALPackSlot::SPECULAR_COLOR].notNull();
+    functor.mNormalID             = normal_id;
+    functor.mSpecularID           = specular_id;
+    functor.mNeutralSpecularColor = specular_id.notNull();
+
+    if (mMode == ALPackMode::PBR_FALLBACK)
+    {
+        // Glossiness always comes off roughness here, so the exponent always
+        // opens up -- with no roughness map it packs as fully rough and the
+        // full slider still reads zero.
+        functor.mSpecularExponent = 255;
+
+        // And the environment slider is forced *off*. It is not the metalness
+        // control it looks like: applyLegacyEnv() ignores the specular tint and
+        // mixes an untinted probe over the surface colour, so raising it turns
+        // a red metal grey. The tinted reflection that does read as metal comes
+        // from applyGlossEnv(), which needs only glossiness and this map's rgb.
+        functor.mEnvIntensity = 0;
+    }
+    else
+    {
+        if (mInputs[(size_t)ALPackSlot::GLOSSINESS].notNull())
+        {
+            functor.mSpecularExponent = 255;
+        }
+        if (mInputs[(size_t)ALPackSlot::SPECULAR_ENV].notNull())
+        {
+            functor.mEnvIntensity = 255;
+        }
+    }
 
     // The alpha mode has to match whatever was packed into the diffuse alpha,
     // since the same eight bits mean transparency or emission depending on it.
@@ -1911,7 +1998,7 @@ void ALFloaterPBRPacker::onApplyToSelection()
     {
         functor.mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE;
     }
-    else if (diffuseHasAlpha())
+    else if (outputHasAlpha(AL_SPECGLOSS_DIFFUSE))
     {
         // Keyed on what survived the pack rather than on a source having been
         // supplied: a fully opaque alpha is dropped, and putting a face in the
@@ -1927,14 +2014,15 @@ void ALFloaterPBRPacker::onApplyToSelection()
     refreshControls();
 }
 
-bool ALFloaterPBRPacker::diffuseHasAlpha() const
+bool ALFloaterPBRPacker::outputHasAlpha(ALPackDest dest) const
 {
-    // Whether the packed diffuse map actually kept an alpha channel. The pack
-    // drops a fully opaque one, so this is the honest answer to "does this
-    // material need a blend mode" even when a source did carry alpha.
+    // Whether a packed map actually kept its alpha channel. The pack drops a
+    // fully opaque one, so this is the honest answer to questions like "does
+    // this material need a blend mode" or "did any glossiness survive",
+    // regardless of which source the alpha was derived from.
     for (const ALPackOutput& output : mOutputs)
     {
-        if (output.mDest == AL_SPECGLOSS_DIFFUSE)
+        if (output.mDest == dest)
         {
             return output.mImage.notNull() && output.mImage->getComponents() == 4;
         }
