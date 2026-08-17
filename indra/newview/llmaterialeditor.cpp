@@ -2623,6 +2623,22 @@ void LLMaterialEditor::setFromPackedTextures(LLPointer<LLImageRaw> base_color,
     LLPointer<LLImageRaw> emissive_img   = emissive.notNull()   ? emissive->duplicate()   : nullptr;
     LLPointer<LLImageRaw> occlusion_img; // already folded into the ORM red channel
 
+    // Retire every slot first. The editor is a single reused instance, so a
+    // hand-off carrying fewer maps than whatever was loaded before would
+    // otherwise inherit the leftovers: the id block below reads from
+    // m*Fetched, pack_textures() leaves an untouched J2C alone, and
+    // saveTextures() uploads from that buffer. The user would pay to upload,
+    // and ship a material referencing, a texture they never packed.
+    mBaseColorFetched = nullptr;
+    mNormalFetched = nullptr;
+    mMetallicRoughnessFetched = nullptr;
+    mEmissiveFetched = nullptr;
+
+    mBaseColorJ2C = nullptr;
+    mNormalJ2C = nullptr;
+    mMetallicRoughnessJ2C = nullptr;
+    mEmissiveJ2C = nullptr;
+
     if (base_color_img)
     {
         mBaseColorFetched = LLViewerTextureManager::getFetchedTexture(base_color_img, FTType::FTT_LOCAL_FILE, true);
