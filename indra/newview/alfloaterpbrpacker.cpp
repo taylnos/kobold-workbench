@@ -43,23 +43,29 @@
 
 // newview
 #include "llfloaterreg.h"
+#include "lllocalbitmaps.h"
 #include "lllocalgltfmaterials.h"
 #include "llmaterialeditor.h"
+#include "llmaterialmgr.h"
 #include "llnotificationsutil.h"
+#include "llselectmgr.h"
 #include "lltinygltfhelper.h"
 #include "llviewermenufile.h"
+#include "llviewerobject.h"
 #include "llviewertexturelist.h"
 
 namespace
 {
-    // Maps an ingest slot onto its XUI widget names and which of the optional
-    // per-slot controls it exposes. Base colour and emissive copy RGB straight
-    // through; the normal map offers only a green flip; the scalar maps get a
-    // full source-channel choice.
+    // Which ingest slot a source card carries in a given mode, and which of the
+    // optional per-slot controls it exposes. Colour maps copy RGB straight
+    // through; a normal map offers only a green flip; scalar maps get a full
+    // source-channel choice. mKey names the XUI strings for the card's title
+    // ("slot_"), its empty-slot hint ("tip_") and its invert tooltip
+    // ("invert_", falling back to invert_generic).
     struct SlotDef
     {
         ALPackSlot  mSlot;
-        const char* mPrefix;
+        const char* mKey;
         bool        mHasChannel;
         bool        mHasInvert;
     };
@@ -77,32 +83,82 @@ namespace
     // would only discard resolution on the axis about to be stretched back up.
     constexpr S32 SLOT_THUMB_SIZE = 128;
 
-    const SlotDef sSlotDefs[] =
+    // How many generic cards the XUI lays out. A mode using fewer hides the
+    // remainder; a mode needing more would need cards adding.
+    constexpr size_t SLOT_CARD_COUNT   = 7;
+    constexpr size_t OUTPUT_CARD_COUNT = 4;
+
+    // glTF PBR ingest, in card order: the colour maps across the top row, the
+    // three scalar maps that make up ORM across the second.
+    const SlotDef sPBRSlots[] =
     {
         { ALPackSlot::BASE_COLOR, "base_color", false, false },
+        { ALPackSlot::OPACITY,    "opacity",    true,  true  },
         { ALPackSlot::EMISSIVE,   "emissive",   false, false },
+        { ALPackSlot::NORMAL,     "normal",     false, true  },
         { ALPackSlot::OCCLUSION,  "occlusion",  true,  true  },
         { ALPackSlot::ROUGHNESS,  "roughness",  true,  true  },
         { ALPackSlot::METALLIC,   "metallic",   true,  true  },
-        { ALPackSlot::NORMAL,     "normal",     false, true  },
-        { ALPackSlot::OPACITY,    "opacity",    true,  true  },
     };
 
-    // The packed textures, in LLGLTFMaterial::TextureInfo order so a result's
-    // mDest doubles as its card index.
+    // SpecGloss ingest. Six of these are Second Life's own authoring names; the
+    // seventh, opacity, is the alternative payload for the diffuse map's alpha.
+    // The two maps that ride in an alpha channel follow the map they ride in.
+    const SlotDef sSpecGlossSlots[] =
+    {
+        { ALPackSlot::BASE_COLOR,     "diffuse",        false, false },
+        { ALPackSlot::OPACITY,        "opacity",        true,  true  },
+        { ALPackSlot::EMISSIVE,       "emissive_mask",  true,  true  },
+        { ALPackSlot::NORMAL,         "normal",         false, true  },
+        { ALPackSlot::GLOSSINESS,     "glossiness",     true,  true  },
+        { ALPackSlot::SPECULAR_COLOR, "specular_color", false, false },
+        { ALPackSlot::SPECULAR_ENV,   "specular_env",   true,  true  },
+    };
+
+    static_assert(LL_ARRAY_SIZE(sPBRSlots) <= SLOT_CARD_COUNT, "not enough source cards in the XUI");
+    static_assert(LL_ARRAY_SIZE(sSpecGlossSlots) <= SLOT_CARD_COUNT, "not enough source cards in the XUI");
+
+    // The packed textures a mode produces, in card order. mKey names the XUI
+    // string for the card's title.
     struct OutputDef
     {
-        LLGLTFMaterial::TextureInfo mDest;
-        const char*                 mPrefix;
+        ALPackDest  mDest;
+        const char* mKey;
     };
 
-    const OutputDef sOutputDefs[] =
+    // Ordered to match the material editor's own slot order.
+    const OutputDef sPBROutputs[] =
     {
-        { LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR,        "out_base_color" },
-        { LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL,            "out_normal"     },
-        { LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS, "out_orm"       },
-        { LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE,          "out_emissive"   },
+        { LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR,         "base_color" },
+        { LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS, "orm"        },
+        { LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE,           "emissive"   },
+        { LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL,             "normal"     },
     };
+
+    // Ordered to match the build floater's Texture / Bumpiness / Shininess.
+    const OutputDef sSpecGlossOutputs[] =
+    {
+        { AL_SPECGLOSS_DIFFUSE,  "diffuse"   },
+        { AL_SPECGLOSS_NORMAL,   "sg_normal" },
+        { AL_SPECGLOSS_SPECULAR, "specular"  },
+    };
+
+    static_assert(LL_ARRAY_SIZE(sPBROutputs) <= OUTPUT_CARD_COUNT, "not enough packed cards in the XUI");
+    static_assert(LL_ARRAY_SIZE(sSpecGlossOutputs) <= OUTPUT_CARD_COUNT, "not enough packed cards in the XUI");
+
+    void mode_slots(ALPackMode mode, const SlotDef*& defs, size_t& count)
+    {
+        const bool spec_gloss = (mode == ALPackMode::SPEC_GLOSS);
+        defs  = spec_gloss ? sSpecGlossSlots : sPBRSlots;
+        count = spec_gloss ? LL_ARRAY_SIZE(sSpecGlossSlots) : LL_ARRAY_SIZE(sPBRSlots);
+    }
+
+    void mode_outputs(ALPackMode mode, const OutputDef*& defs, size_t& count)
+    {
+        const bool spec_gloss = (mode == ALPackMode::SPEC_GLOSS);
+        defs  = spec_gloss ? sSpecGlossOutputs : sPBROutputs;
+        count = spec_gloss ? LL_ARRAY_SIZE(sSpecGlossOutputs) : LL_ARRAY_SIZE(sPBROutputs);
+    }
 
     struct LoadResult
     {
@@ -120,7 +176,7 @@ namespace
     };
 
     // Find a target in a recipe by the material slot it feeds.
-    ALPackTarget* find_target(ALPBRPackRecipe& recipe, LLGLTFMaterial::TextureInfo dest)
+    ALPackTarget* find_target(ALPBRPackRecipe& recipe, ALPackDest dest)
     {
         for (ALPackTarget& target : recipe.mTargets)
         {
@@ -132,6 +188,55 @@ namespace
         return nullptr;
     }
 
+    // Sets a legacy material's maps and the sliders those maps multiply
+    // against, in one pass over the selection. Doing it as a single functor
+    // rather than one LLSelectedTEMaterial call per property means one material
+    // put and one TE update per face instead of half a dozen.
+    struct ALSpecGlossApplyFunctor final : public LLSelectedTEMaterialFunctor
+    {
+        LLUUID mNormalID;
+        LLUUID mSpecularID;
+        U8     mAlphaMode      = LLMaterial::DIFFUSE_ALPHA_MODE_NONE;
+        bool   mPackedGloss    = false;
+        bool   mPackedEnv      = false;
+        bool   mPackedSpecular = false;
+
+        LLMaterialPtr apply(LLViewerObject* object, S32 face, LLTextureEntry* tep,
+                            LLMaterialPtr& current_material) override
+        {
+            LLMaterialPtr material = current_material.isNull()
+                                   ? new LLMaterial()
+                                   : new LLMaterial(current_material->asLLSD());
+
+            material->setNormalID(mNormalID);
+            material->setSpecularID(mSpecularID);
+            material->setDiffuseAlphaMode(mAlphaMode);
+
+            // Both of these default to a value that would multiply the packed
+            // channel away -- the specular exponent to 0.2 and the environment
+            // intensity to zero -- so drive them to full wherever a real map
+            // was packed. Same argument as the neutral fills: the map is the
+            // detail, the slider is the amount, and the amount has to start at
+            // "all of it" for the map to be visible at all.
+            if (mPackedGloss)
+            {
+                material->setSpecularLightExponent(255);
+            }
+            if (mPackedEnv)
+            {
+                material->setEnvironmentIntensity(255);
+            }
+            if (mPackedSpecular)
+            {
+                material->setSpecularLightColor(LLColor4U::white);
+            }
+
+            LLMaterialMgr::getInstance()->put(object->getID(), face, *material);
+            object->setTEMaterialParams(face, material);
+            return material;
+        }
+    };
+
     // Filename tokens that identify a source map. Order matters: the longer,
     // less ambiguous forms have to be tested before the short suffixes, or
     // "..._normal" would be claimed by the metalness token "_n".
@@ -142,7 +247,7 @@ namespace
         bool        mImpliesInvert;
     };
 
-    const SlotHint sSlotHints[] =
+    const SlotHint sPBRHints[] =
     {
         { "basecolor",        ALPackSlot::BASE_COLOR, false },
         { "base_color",       ALPackSlot::BASE_COLOR, false },
@@ -181,6 +286,50 @@ namespace
         { "opacity",          ALPackSlot::OPACITY,    false },
         { "_alpha",           ALPackSlot::OPACITY,    false },
         { "transparen",       ALPackSlot::OPACITY,    false },
+    };
+
+    // The same, for SpecGloss authoring. Several tokens change meaning between
+    // the two: a roughness map is a glossiness map upside down here, and
+    // "gloss" is the map itself rather than an inverted roughness.
+    const SlotHint sSpecGlossHints[] =
+    {
+        { "basecolor",      ALPackSlot::BASE_COLOR,     false },
+        { "base_color",     ALPackSlot::BASE_COLOR,     false },
+        { "albedo",         ALPackSlot::BASE_COLOR,     false },
+        { "diffuse",        ALPackSlot::BASE_COLOR,     false },
+        { "_diff",          ALPackSlot::BASE_COLOR,     false },
+        { "_col",           ALPackSlot::BASE_COLOR,     false },
+
+        { "normal",         ALPackSlot::NORMAL,         false },
+        { "_nrm",           ALPackSlot::NORMAL,         false },
+        { "_norm",          ALPackSlot::NORMAL,         false },
+
+        { "glossiness",     ALPackSlot::GLOSSINESS,     false },
+        { "gloss",          ALPackSlot::GLOSSINESS,     false },
+        { "smoothness",     ALPackSlot::GLOSSINESS,     false },
+        // Roughness is glossiness upside down.
+        { "roughness",      ALPackSlot::GLOSSINESS,     true  },
+        { "_rough",         ALPackSlot::GLOSSINESS,     true  },
+        { "_rgh",           ALPackSlot::GLOSSINESS,     true  },
+
+        // Longer tokens win, so a "_specularcolor" file lands on the tint and
+        // a "_specularenvironment" one on the environment mask.
+        { "specularcolor",  ALPackSlot::SPECULAR_COLOR, false },
+        { "specular_color", ALPackSlot::SPECULAR_COLOR, false },
+        { "specular",       ALPackSlot::SPECULAR_COLOR, false },
+        { "_spec",          ALPackSlot::SPECULAR_COLOR, false },
+
+        { "environment",    ALPackSlot::SPECULAR_ENV,   false },
+        { "reflection",     ALPackSlot::SPECULAR_ENV,   false },
+        { "_env",           ALPackSlot::SPECULAR_ENV,   false },
+
+        { "emissive",       ALPackSlot::EMISSIVE,       false },
+        { "emission",       ALPackSlot::EMISSIVE,       false },
+        { "_emis",          ALPackSlot::EMISSIVE,       false },
+
+        { "opacity",        ALPackSlot::OPACITY,        false },
+        { "_alpha",         ALPackSlot::OPACITY,        false },
+        { "transparen",     ALPackSlot::OPACITY,        false },
     };
 
     // Already-packed masks. These feed several slots from one file, each
@@ -249,7 +398,10 @@ namespace
         }
     }
 
-    void collect_warnings(const ALPackInputSet& inputs, S32 max_dim, std::vector<std::string>& warnings)
+    using ALSlotLabels = std::array<std::string, (size_t)ALPackSlot::COUNT>;
+
+    void collect_warnings(const ALPackInputSet& inputs, ALPackMode mode, S32 max_dim,
+                          const ALSlotLabels& labels, std::vector<std::string>& warnings)
     {
         for (size_t i = 0; i < inputs.size(); ++i)
         {
@@ -261,13 +413,58 @@ namespace
             if (image->getWidth() > max_dim || image->getHeight() > max_dim)
             {
                 warnings.push_back(llformat("%s is larger than %d and will be downscaled.",
-                                            ALPBRPacker::slotName((ALPackSlot)i), max_dim));
+                                            labels[i].c_str(), max_dim));
             }
         }
 
         U8 min_value = 0;
         U8 max_value = 0;
         F32 mean = 0.f;
+
+        // Second Life reads normals in the OpenGL convention in both material
+        // systems, so this one applies either way.
+        const LLPointer<LLImageRaw>& normal = inputs[(size_t)ALPackSlot::NORMAL];
+        if (normal.notNull() && normal->getComponents() >= 3)
+        {
+            channel_stats(normal, 1, min_value, max_value, mean);
+            if (mean < 118.f)
+            {
+                warnings.push_back("Normal green averages low, which suggests a DirectX-convention map.");
+            }
+        }
+
+        if (mode == ALPackMode::SPEC_GLOSS)
+        {
+            // A face carries one diffuse alpha mode, so the emissive mask and
+            // opacity cannot both survive. buildRecipe() keeps the emissive
+            // mask; say so rather than quietly dropping the other.
+            if (inputs[(size_t)ALPackSlot::EMISSIVE].notNull() &&
+                inputs[(size_t)ALPackSlot::OPACITY].notNull())
+            {
+                warnings.push_back("Emissive mask and opacity share the diffuse alpha; only the emissive mask is packed.");
+            }
+
+            const LLPointer<LLImageRaw>& gloss = inputs[(size_t)ALPackSlot::GLOSSINESS];
+            if (gloss.notNull())
+            {
+                channel_stats(gloss, 0, min_value, max_value, mean);
+                if (min_value == max_value)
+                {
+                    warnings.push_back("Glossiness is a constant value; the Glossiness slider alone would do.");
+                }
+            }
+
+            const LLPointer<LLImageRaw>& env = inputs[(size_t)ALPackSlot::SPECULAR_ENV];
+            if (env.notNull())
+            {
+                channel_stats(env, 0, min_value, max_value, mean);
+                if (max_value == 0)
+                {
+                    warnings.push_back("Specular environment is black, which switches environment reflection off entirely.");
+                }
+            }
+            return;
+        }
 
         const LLPointer<LLImageRaw>& occlusion = inputs[(size_t)ALPackSlot::OCCLUSION];
         if (occlusion.notNull())
@@ -286,16 +483,6 @@ namespace
             if (min_value == max_value)
             {
                 warnings.push_back("Metallic is a constant value; the Metalness Factor alone would do.");
-            }
-        }
-
-        const LLPointer<LLImageRaw>& normal = inputs[(size_t)ALPackSlot::NORMAL];
-        if (normal.notNull() && normal->getComponents() >= 3)
-        {
-            channel_stats(normal, 1, min_value, max_value, mean);
-            if (mean < 118.f)
-            {
-                warnings.push_back("Normal green averages low, which suggests a DirectX-convention map.");
             }
         }
 
@@ -352,51 +539,32 @@ ALFloaterPBRPacker::ALFloaterPBRPacker(const LLSD& key)
     : LLFloater(key)
     , LLEventTimer(SOURCE_WATCH_PERIOD)
 {
-    // A stable stem for every packed map this session writes, so re-packing
-    // overwrites in place -- which is what makes the local texture system
-    // notice and refresh the in-world preview. Named rather than a bare uuid
-    // because these show up in the user's Local Textures list until the
-    // floater is closed.
-    LLUUID session;
-    session.generate();
-    mTempStem = gDirUtilp->add(gDirUtilp->getTempDir(),
-                               "PBRPacker_" + session.asString().substr(0, 8));
+    newTempStem();
 }
 
 ALFloaterPBRPacker::~ALFloaterPBRPacker()
 {
 }
 
+void ALFloaterPBRPacker::newTempStem()
+{
+    // A stable stem for every packed map this session writes, so re-packing
+    // overwrites in place -- which is what makes the local texture and local
+    // material systems notice and refresh the in-world preview. Named rather
+    // than a bare uuid because these show up in the user's Local Textures list
+    // until the viewer exits.
+    //
+    // A new one is taken whenever the material type changes, so a re-pack in
+    // the new mode cannot overwrite the files a local material or local texture
+    // registered under the old one is still reading.
+    LLUUID session;
+    session.generate();
+    mTempStem = gDirUtilp->add(gDirUtilp->getTempDir(),
+                               "PBRPacker_" + session.asString().substr(0, 8));
+}
+
 bool ALFloaterPBRPacker::postBuild()
 {
-    for (const SlotDef& def : sSlotDefs)
-    {
-        SlotUI& ui = mSlotUI[(size_t)def.mSlot];
-        const std::string prefix(def.mPrefix);
-
-        ui.mCard = getChild<LLView>(prefix + "_card");
-
-        ui.mClear = getChild<LLButton>(prefix + "_clear");
-        ui.mClear->setClickedCallback([this, slot = def.mSlot](LLUICtrl*, const LLSD&) { onClear(slot); });
-
-        if (def.mHasChannel)
-        {
-            ui.mChannel = getChild<LLComboBox>(prefix + "_channel");
-            ui.mChannel->setCommitCallback([this](LLUICtrl*, const LLSD&) { onSettingChanged(); });
-        }
-
-        if (def.mHasInvert)
-        {
-            ui.mInvert = getChild<LLButton>(prefix + "_invert");
-            ui.mInvert->setCommitCallback([this](LLUICtrl*, const LLSD&) { onSettingChanged(); });
-        }
-
-        // The preview itself opens the picker.
-        ui.mThumb = getChild<LLButton>(prefix + "_thumb");
-        ui.mThumb->setClickedCallback([this, slot = def.mSlot](LLUICtrl*, const LLSD&) { onBrowse(slot); });
-        mSlotEmptyTip[(size_t)def.mSlot] = ui.mThumb->getToolTip();
-    }
-
     mPackBtn = getChild<LLButton>("pack");
     mPackBtn->setClickedCallback([this](LLUICtrl*, const LLSD&) { onPack(); });
 
@@ -408,6 +576,9 @@ bool ALFloaterPBRPacker::postBuild()
 
     mSendToEditorBtn = getChild<LLButton>("send_to_editor");
     mSendToEditorBtn->setClickedCallback([this](LLUICtrl*, const LLSD&) { onSendToMaterialEditor(); });
+
+    mApplyToSelectionBtn = getChild<LLButton>("apply_to_selection");
+    mApplyToSelectionBtn->setClickedCallback([this](LLUICtrl*, const LLSD&) { onApplyToSelection(); });
 
     mMaxSizeCombo = getChild<LLComboBox>("max_size");
     mMaxSizeCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onSettingChanged(); });
@@ -423,31 +594,268 @@ bool ALFloaterPBRPacker::postBuild()
     mPresetCombo = getChild<LLComboBox>("preset");
     mPresetCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onPresetChanged(); });
 
-    // Default to reading an already-packed ORM mask by channel. That is the
-    // plain glTF 2.0 case and what most creators arrive with -- a Substance
-    // export already carries a combined occlusionRoughnessMetallic map. Anyone
-    // feeding three separate greyscale maps switches the preset, and the
-    // filename heuristics in onFilesPicked() correct the routing on their own.
-    //
-    // Selected by value rather than index so the combo can be ordered for
-    // readability without silently remapping the presets.
-    mPresetCombo->setValue(LLSD::Integer(PRESET_PACKED_ORM));
-    applyPreset(PRESET_PACKED_ORM);
+    mPresetSGCombo = getChild<LLComboBox>("preset_specgloss");
+    mPresetSGCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onPresetChanged(); });
 
-    for (const OutputDef& def : sOutputDefs)
-    {
-        OutputUI& out = mOutputUI[(size_t)def.mDest];
-        const std::string prefix(def.mPrefix);
-        out.mCard  = getChild<LLView>(prefix + "_card");
-        out.mThumb = getChild<LLView>(prefix + "_thumb");
-        out.mSize  = getChild<LLTextBox>(prefix + "_size");
-    }
+    mModeCombo = getChild<LLComboBox>("material_mode");
+    mModeCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onModeChanged(); });
 
     mStatusText = getChild<LLTextBox>("status");
 
-    refreshControls();
+    // Look the cards up and wire them once. Both the LLUICtrl and LLButton
+    // callback setters return a boost::signals2::connection -- they add a slot
+    // to a signal rather than replacing what is there -- so anything rebound on
+    // every mode change would accumulate, and a single click would fire once
+    // per flip. Hence the indirection through mCardSlot: the handlers cannot
+    // capture an ingest slot, because the card's slot changes with the mode.
+    mCards.reserve(SLOT_CARD_COUNT);
+    for (size_t card = 0; card < SLOT_CARD_COUNT; ++card)
+    {
+        const std::string prefix = llformat("slot%d", (S32)card);
+
+        SlotUI ui;
+        ui.mCard    = getChild<LLView>(prefix + "_card");
+        ui.mLabel   = getChild<LLTextBox>(prefix + "_label");
+        ui.mClear   = getChild<LLButton>(prefix + "_clear");
+        ui.mThumb   = getChild<LLButton>(prefix + "_thumb");
+        ui.mChannel = getChild<LLComboBox>(prefix + "_channel");
+        ui.mInvert  = getChild<LLButton>(prefix + "_invert");
+
+        // The preview itself opens the picker.
+        ui.mThumb->setClickedCallback([this, card](LLUICtrl*, const LLSD&) { onCardBrowse(card); });
+        ui.mClear->setClickedCallback([this, card](LLUICtrl*, const LLSD&) { onCardClear(card); });
+        ui.mChannel->setCommitCallback([this](LLUICtrl*, const LLSD&) { onSettingChanged(); });
+        ui.mInvert->setCommitCallback([this](LLUICtrl*, const LLSD&) { onSettingChanged(); });
+
+        mCards.push_back(ui);
+    }
+    mCardSlot.assign(SLOT_CARD_COUNT, ALPackSlot::COUNT);
+
+    mOutputCards.reserve(OUTPUT_CARD_COUNT);
+    for (size_t card = 0; card < OUTPUT_CARD_COUNT; ++card)
+    {
+        const std::string prefix = llformat("out%d", (S32)card);
+
+        OutputUI out;
+        out.mCard  = getChild<LLView>(prefix + "_card");
+        out.mLabel = getChild<LLTextBox>(prefix + "_label");
+        out.mThumb = getChild<LLView>(prefix + "_thumb");
+        out.mSize  = getChild<LLTextBox>(prefix + "_size");
+
+        mOutputCards.push_back(out);
+    }
+
+    // Points the cards at this mode's slots, sets its default preset, refreshes.
+    mModeCombo->setValue(LLSD::Integer((S32)ALPackMode::GLTF_PBR));
+    applyMode(ALPackMode::GLTF_PBR);
 
     return LLFloater::postBuild();
+}
+
+void ALFloaterPBRPacker::onCardBrowse(size_t card)
+{
+    if (card < mCardSlot.size() && mCardSlot[card] != ALPackSlot::COUNT)
+    {
+        onBrowse(mCardSlot[card]);
+    }
+}
+
+void ALFloaterPBRPacker::onCardClear(size_t card)
+{
+    if (card < mCardSlot.size() && mCardSlot[card] != ALPackSlot::COUNT)
+    {
+        onClear(mCardSlot[card]);
+    }
+}
+
+void ALFloaterPBRPacker::applyMode(ALPackMode mode)
+{
+    mMode = mode;
+
+    const SlotDef* slot_defs = nullptr;
+    size_t         slot_count = 0;
+    mode_slots(mode, slot_defs, slot_count);
+
+    std::array<bool, (size_t)ALPackSlot::COUNT> survives{};
+    for (size_t i = 0; i < slot_count; ++i)
+    {
+        survives[(size_t)slot_defs[i].mSlot] = true;
+    }
+
+    // Base colour, normal, opacity and emissive name the same image in both
+    // modes, so they carry across and flipping the material type does not throw
+    // away most of a loaded set. Anything the incoming mode has no slot for is
+    // dropped rather than silently reinterpreted -- a specular tint is not a
+    // metalness map.
+    S32 dropped = 0;
+    for (size_t i = 0; i < (size_t)ALPackSlot::COUNT; ++i)
+    {
+        if (survives[i])
+        {
+            continue;
+        }
+
+        if (!mSlotPaths[i].empty())
+        {
+            ++dropped;
+        }
+        mInputs[i] = nullptr;
+        mSlotPaths[i].clear();
+        mSlotThumbSrc[i] = nullptr;
+        mSlotThumbTex[i] = nullptr;
+        mSourceSettling[i] = false;
+    }
+
+    clearOutputs();
+
+    // A local material or local textures made earlier stay registered and keep
+    // their files -- they behave like any other local asset, and the user may
+    // already have applied them. Forget them here and take a fresh file stem so
+    // the next pack writes somewhere new instead of overwriting under them.
+    mLocalMaterialId.setNull();
+    mLocalTextureIds.fill(LLUUID::null);
+    mGltfPath.clear();
+    newTempStem();
+
+    mActiveSlots.clear();
+    for (SlotUI& ui : mSlotUI)
+    {
+        ui = SlotUI();
+    }
+    for (std::string& label : mSlotLabel)
+    {
+        label.clear();
+    }
+    for (std::string& tip : mSlotEmptyTip)
+    {
+        tip.clear();
+    }
+
+    mCardSlot.assign(mCards.size(), ALPackSlot::COUNT);
+
+    for (size_t card = 0; card < mCards.size(); ++card)
+    {
+        const SlotUI& widgets = mCards[card];
+
+        // A mode with fewer ingest maps than the XUI has cards hides the rest.
+        if (card >= slot_count)
+        {
+            widgets.mCard->setVisible(false);
+            continue;
+        }
+        widgets.mCard->setVisible(true);
+
+        const SlotDef& def = slot_defs[card];
+        const size_t   index = (size_t)def.mSlot;
+        const std::string key(def.mKey);
+
+        mSlotLabel[index]    = getString("slot_" + key);
+        mSlotEmptyTip[index] = getString("tip_" + key);
+        widgets.mLabel->setText(mSlotLabel[index]);
+
+        // Both optional controls exist on every card; the mode decides which
+        // mean anything here. A null pointer in SlotUI is what the rest of the
+        // floater reads as "this slot has no channel choice / no inversion".
+        widgets.mChannel->setVisible(def.mHasChannel);
+        widgets.mInvert->setVisible(def.mHasInvert);
+
+        SlotUI& ui = mSlotUI[index];
+        ui = widgets;
+        ui.mChannel = def.mHasChannel ? widgets.mChannel : nullptr;
+        ui.mInvert  = def.mHasInvert ? widgets.mInvert : nullptr;
+
+        if (def.mHasInvert)
+        {
+            widgets.mInvert->setToolTip(hasString("invert_" + key) ? getString("invert_" + key)
+                                                                   : getString("invert_generic"));
+        }
+
+        setSlotRouting(def.mSlot, ALPackChannel::RED, false);
+        mCardSlot[card] = def.mSlot;
+        mActiveSlots.push_back(def.mSlot);
+    }
+
+    const OutputDef* output_defs = nullptr;
+    size_t           output_count = 0;
+    mode_outputs(mode, output_defs, output_count);
+
+    mActiveOutputs.clear();
+    for (OutputUI& out : mOutputUI)
+    {
+        out = OutputUI();
+    }
+
+    for (size_t card = 0; card < mOutputCards.size(); ++card)
+    {
+        const OutputUI& widgets = mOutputCards[card];
+
+        if (card >= output_count)
+        {
+            widgets.mCard->setVisible(false);
+            continue;
+        }
+        widgets.mCard->setVisible(true);
+
+        const OutputDef& def = output_defs[card];
+        mOutputUI[(size_t)def.mDest] = widgets;
+        widgets.mLabel->setText(getString(std::string("out_") + def.mKey));
+
+        // This card served a different packed map a moment ago, and its size
+        // line is not covered by the clearOutputs() above -- that ran against
+        // the outgoing mode's bindings.
+        widgets.mSize->setText(std::string());
+
+        mActiveOutputs.push_back(def.mDest);
+    }
+
+    const bool spec_gloss = (mode == ALPackMode::SPEC_GLOSS);
+
+    mPresetCombo->setVisible(!spec_gloss);
+    mPresetSGCombo->setVisible(spec_gloss);
+    mMakeLocalBtn->setVisible(!spec_gloss);
+    mSendToEditorBtn->setVisible(!spec_gloss);
+    mApplyToSelectionBtn->setVisible(spec_gloss);
+
+    if (spec_gloss)
+    {
+        mPresetSGCombo->setValue(LLSD::Integer(SG_PRESET_SEPARATE));
+        applyPreset(SG_PRESET_SEPARATE);
+    }
+    else
+    {
+        // Default to reading an already-packed ORM mask by channel. That is the
+        // plain glTF 2.0 case and what most creators arrive with -- a Substance
+        // export already carries a combined occlusionRoughnessMetallic map.
+        // Anyone feeding three separate greyscale maps switches the preset, and
+        // the filename heuristics in onFilesPicked() correct the routing on
+        // their own.
+        //
+        // Selected by value rather than index so the combo can be ordered for
+        // readability without silently remapping the presets.
+        mPresetCombo->setValue(LLSD::Integer(PRESET_PACKED_ORM));
+        applyPreset(PRESET_PACKED_ORM);
+    }
+
+    setStatus(dropped > 0 ? llformat("Cleared %d source map%s this material type has no slot for.",
+                                     dropped, dropped == 1 ? "" : "s")
+                          : std::string());
+    refreshControls();
+}
+
+void ALFloaterPBRPacker::onModeChanged()
+{
+    if (!mModeCombo)
+    {
+        return;
+    }
+
+    const S32 value = mModeCombo->getValue().asInteger();
+    const ALPackMode mode = (value == (S32)ALPackMode::SPEC_GLOSS) ? ALPackMode::SPEC_GLOSS
+                                                                   : ALPackMode::GLTF_PBR;
+    if (mode != mMode)
+    {
+        applyMode(mode);
+    }
 }
 
 void ALFloaterPBRPacker::onOpen(const LLSD& key)
@@ -664,6 +1072,10 @@ void ALFloaterPBRPacker::onFilesPicked(const std::vector<std::string>& filenames
     std::vector<std::string> unmatched;
     S32 assigned = 0;
 
+    const bool spec_gloss = (mMode == ALPackMode::SPEC_GLOSS);
+    const SlotHint* hints = spec_gloss ? sSpecGlossHints : sPBRHints;
+    const size_t hint_count = spec_gloss ? LL_ARRAY_SIZE(sSpecGlossHints) : LL_ARRAY_SIZE(sPBRHints);
+
     for (const std::string& path : filenames)
     {
         std::string name = gDirUtilp->getBaseFileName(path, true);
@@ -671,8 +1083,9 @@ void ALFloaterPBRPacker::onFilesPicked(const std::vector<std::string>& filenames
 
         // An already-packed ORM feeds three slots off one file, each reading a
         // different channel. This is the case the old import path could not
-        // express at all.
-        if (contains_any(name, sCombinedORMTokens, LL_ARRAY_SIZE(sCombinedORMTokens)))
+        // express at all. SpecGloss has no equivalent -- its two packed maps
+        // pair a colour map with a mask rather than combining three masks.
+        if (!spec_gloss && contains_any(name, sCombinedORMTokens, LL_ARRAY_SIZE(sCombinedORMTokens)))
         {
             loadSlot(ALPackSlot::OCCLUSION, path, false);
             loadSlot(ALPackSlot::ROUGHNESS, path, false);
@@ -684,7 +1097,7 @@ void ALFloaterPBRPacker::onFilesPicked(const std::vector<std::string>& filenames
             continue;
         }
 
-        if (contains_any(name, sCombinedMRTokens, LL_ARRAY_SIZE(sCombinedMRTokens)))
+        if (!spec_gloss && contains_any(name, sCombinedMRTokens, LL_ARRAY_SIZE(sCombinedMRTokens)))
         {
             loadSlot(ALPackSlot::ROUGHNESS, path, false);
             loadSlot(ALPackSlot::METALLIC, path, false);
@@ -699,8 +1112,9 @@ void ALFloaterPBRPacker::onFilesPicked(const std::vector<std::string>& filenames
         // one instead of by the order of this table.
         const SlotHint* best = nullptr;
         size_t best_length = 0;
-        for (const SlotHint& hint : sSlotHints)
+        for (size_t i = 0; i < hint_count; ++i)
         {
+            const SlotHint& hint = hints[i];
             const size_t length = strlen(hint.mToken);
             if (length > best_length && name.find(hint.mToken) != std::string::npos)
             {
@@ -739,6 +1153,24 @@ void ALFloaterPBRPacker::onFilesPicked(const std::vector<std::string>& filenames
 
 void ALFloaterPBRPacker::applyPreset(S32 preset)
 {
+    if (mMode == ALPackMode::SPEC_GLOSS)
+    {
+        switch (preset)
+        {
+        case SG_PRESET_FROM_ROUGHNESS: // a PBR-authored roughness map as gloss
+            setSlotRouting(ALPackSlot::GLOSSINESS, ALPackChannel::RED, true);
+            setSlotRouting(ALPackSlot::SPECULAR_ENV, ALPackChannel::RED, false);
+            break;
+
+        case SG_PRESET_SEPARATE:
+        default:
+            setSlotRouting(ALPackSlot::GLOSSINESS, ALPackChannel::RED, false);
+            setSlotRouting(ALPackSlot::SPECULAR_ENV, ALPackChannel::RED, false);
+            break;
+        }
+        return;
+    }
+
     switch (preset)
     {
     case PRESET_PACKED_ORM: // one already-packed mask read three ways
@@ -764,12 +1196,13 @@ void ALFloaterPBRPacker::applyPreset(S32 preset)
 
 void ALFloaterPBRPacker::onPresetChanged()
 {
-    if (!mPresetCombo)
+    LLComboBox* combo = (mMode == ALPackMode::SPEC_GLOSS) ? mPresetSGCombo : mPresetCombo;
+    if (!combo)
     {
         return;
     }
 
-    applyPreset(mPresetCombo->getValue().asInteger());
+    applyPreset(combo->getValue().asInteger());
     onSettingChanged();
 }
 
@@ -829,7 +1262,7 @@ void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool
                 self->clearOutputs();
 
                 self->setStatus(llformat("%s: %dx%d",
-                                         ALPBRPacker::slotName(slot),
+                                         self->mSlotLabel[(size_t)slot].c_str(),
                                          (S32)result->mImage->getWidth(),
                                          (S32)result->mImage->getHeight()));
             }
@@ -886,9 +1319,9 @@ bool ALFloaterPBRPacker::tick()
         return false;
     }
 
-    for (const SlotDef& def : sSlotDefs)
+    for (ALPackSlot slot : mActiveSlots)
     {
-        const size_t index = (size_t)def.mSlot;
+        const size_t index = (size_t)slot;
         const std::string& path = mSlotPaths[index];
         if (path.empty())
         {
@@ -916,7 +1349,7 @@ bool ALFloaterPBRPacker::tick()
         if (mSourceSettling[index])
         {
             mSourceSettling[index] = false;
-            loadSlot(def.mSlot, path, true);
+            loadSlot(slot, path, true);
         }
     }
 
@@ -942,53 +1375,81 @@ void ALFloaterPBRPacker::onSettingChanged()
     refreshControls();
 }
 
-ALPBRPackRecipe ALFloaterPBRPacker::buildRecipe() const
+ALPackSlot ALFloaterPBRPacker::diffuseAlphaSlot() const
 {
-    ALPBRPackRecipe recipe = ALPBRPackRecipe::secondLifeDefault();
-
-    // The three scalar maps that make up ORM, in channel order.
-    const struct { ALPackSlot mSlot; S32 mChannelIndex; } orm_bindings[] =
+    // In SpecGloss an emissive mask is a diffuse-alpha payload, where in glTF
+    // it is a colour map of its own -- so only one mode has this contest. It
+    // wins over opacity because loading a map into a slot that exists purely to
+    // ride in alpha is the more deliberate act; collect_warnings() says so when
+    // both are supplied.
+    if (mMode == ALPackMode::SPEC_GLOSS && mInputs[(size_t)ALPackSlot::EMISSIVE].notNull())
     {
-        { ALPackSlot::OCCLUSION, 0 },
-        { ALPackSlot::ROUGHNESS, 1 },
-        { ALPackSlot::METALLIC,  2 },
-    };
-
-    if (ALPackTarget* orm = find_target(recipe, LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS))
-    {
-        for (const auto& binding : orm_bindings)
-        {
-            const SlotUI& ui = mSlotUI[(size_t)binding.mSlot];
-            ALPackChannelSource& channel = orm->mChannels[binding.mChannelIndex];
-            channel = ALPackChannelSource::from(
-                binding.mSlot,
-                ui.mChannel ? channelFromIndex(ui.mChannel->getValue().asInteger()) : ALPackChannel::RED,
-                slotInverted(binding.mSlot));
-        }
+        return ALPackSlot::EMISSIVE;
     }
 
-    // A separate opacity map takes over base colour's alpha. Without one the
-    // default recipe keeps the base colour image's own alpha, which is what a
-    // creator exporting a single RGBA base colour expects.
     if (mInputs[(size_t)ALPackSlot::OPACITY].notNull())
     {
-        if (ALPackTarget* base = find_target(recipe, LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR))
+        return ALPackSlot::OPACITY;
+    }
+
+    return ALPackSlot::COUNT;
+}
+
+ALPBRPackRecipe ALFloaterPBRPacker::buildRecipe() const
+{
+    ALPBRPackRecipe recipe = ALPBRPackRecipe::forMode(mMode);
+
+    // Overlay the routing UI onto whatever the mode's recipe binds. Done by
+    // walking the recipe rather than by naming targets and channel indices, so
+    // a slot picks up its channel choice and inversion wherever the recipe
+    // happens to read it -- which is what lets the same seven cards drive two
+    // completely different texture sets.
+    for (ALPackTarget& target : recipe.mTargets)
+    {
+        for (S8 c = 0; c < target.mComponents; ++c)
         {
-            const SlotUI& ui = mSlotUI[(size_t)ALPackSlot::OPACITY];
-            base->mChannels[3] = ALPackChannelSource::from(
-                ALPackSlot::OPACITY,
-                ui.mChannel ? channelFromIndex(ui.mChannel->getValue().asInteger()) : ALPackChannel::RED,
-                slotInverted(ALPackSlot::OPACITY));
+            ALPackChannelSource& channel = target.mChannels[c];
+            if (channel.isConstant())
+            {
+                continue;
+            }
+
+            const SlotUI& ui = mSlotUI[(size_t)channel.mSlot];
+            if (ui.mChannel)
+            {
+                // A scalar map: the card says which channel to read and whether
+                // to flip it, and that answer is the same everywhere it feeds.
+                channel.mChannel = channelFromIndex(ui.mChannel->getValue().asInteger());
+                channel.mInvert  = slotInverted(channel.mSlot);
+            }
+            else if (slotInverted(channel.mSlot))
+            {
+                // A colour map read as RGB: its one toggle is the green flip
+                // that corrects a DirectX-convention normal, so it applies to
+                // green alone. Second Life reads normals the same way glTF
+                // does, so this is right in both modes.
+                channel.mInvert = (channel.mChannel == ALPackChannel::GREEN);
+            }
         }
     }
 
-    // glTF wants OpenGL-convention normals (+Y up). A DirectX-convention source
-    // is corrected by inverting green.
-    if (slotInverted(ALPackSlot::NORMAL))
+    // A separate opacity or emissive mask takes over the colour map's alpha.
+    // Without one the recipe keeps the colour image's own alpha, which is what
+    // a creator exporting a single RGBA base colour expects.
+    const ALPackSlot alpha_slot = diffuseAlphaSlot();
+    if (alpha_slot != ALPackSlot::COUNT)
     {
-        if (ALPackTarget* normal = find_target(recipe, LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL))
+        const ALPackDest colour_dest = (mMode == ALPackMode::SPEC_GLOSS)
+                                     ? (ALPackDest)AL_SPECGLOSS_DIFFUSE
+                                     : (ALPackDest)LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR;
+
+        if (ALPackTarget* colour = find_target(recipe, colour_dest))
         {
-            normal->mChannels[1].mInvert = true;
+            const SlotUI& ui = mSlotUI[(size_t)alpha_slot];
+            colour->mChannels[3] = ALPackChannelSource::from(
+                alpha_slot,
+                ui.mChannel ? channelFromIndex(ui.mChannel->getValue().asInteger()) : ALPackChannel::RED,
+                slotInverted(alpha_slot));
         }
     }
 
@@ -1012,6 +1473,8 @@ void ALFloaterPBRPacker::onPack()
 
     const ALPackInputSet inputs = mInputs;
     const ALPBRPackRecipe recipe = buildRecipe();
+    const ALPackMode mode = mMode;
+    const ALSlotLabels labels = mSlotLabel;
     // "Auto Size" is stored as 0: no explicit cap, so the pack follows the
     // largest source map and the engine's own ceiling applies. Resolved here
     // rather than in the engine so the size warnings compare against the same
@@ -1033,11 +1496,11 @@ void ALFloaterPBRPacker::onPack()
 
     const bool posted = main_queue->postTo(
         general_queue,
-        [inputs, recipe, max_dim, stem, result]()
+        [inputs, recipe, mode, labels, max_dim, stem, result]()
         {
             // Scanning pixels for advisory warnings belongs here rather than on
             // the main thread, even strided.
-            collect_warnings(inputs, max_dim, result->mWarnings);
+            collect_warnings(inputs, mode, max_dim, labels, result->mWarnings);
 
             result->mOk = ALPBRPacker::pack(inputs, recipe, max_dim, result->mOutputs, result->mError);
             if (!result->mOk)
@@ -1125,6 +1588,18 @@ void ALFloaterPBRPacker::onPack()
                     {
                         mgr->doUpdates();
                     }
+                }
+            }
+
+            // The SpecGloss equivalent needs no rewrite: the packed files were
+            // overwritten in place, so the local textures already point at the
+            // new pixels and only need prodding to reload ahead of their own
+            // three second poll.
+            if (self->hasLocalTextures())
+            {
+                if (LLLocalBitmapMgr* mgr = LLLocalBitmapMgr::getInstance())
+                {
+                    mgr->doUpdates();
                 }
             }
 
@@ -1271,7 +1746,9 @@ bool ALFloaterPBRPacker::writeLocalMaterialFile(std::string& path_out, std::stri
 
 void ALFloaterPBRPacker::onMakeLocalMaterial()
 {
-    if (mOutputs.empty())
+    // Legacy materials have no asset to register; that mode applies its maps as
+    // loose local textures instead.
+    if (mMode != ALPackMode::GLTF_PBR || mOutputs.empty())
     {
         return;
     }
@@ -1313,7 +1790,7 @@ void ALFloaterPBRPacker::onMakeLocalMaterial()
     refreshControls();
 }
 
-LLPointer<LLImageRaw> ALFloaterPBRPacker::outputFor(LLGLTFMaterial::TextureInfo dest) const
+LLPointer<LLImageRaw> ALFloaterPBRPacker::outputFor(ALPackDest dest) const
 {
     for (const ALPackOutput& output : mOutputs)
     {
@@ -1325,14 +1802,154 @@ LLPointer<LLImageRaw> ALFloaterPBRPacker::outputFor(LLGLTFMaterial::TextureInfo 
     return nullptr;
 }
 
+bool ALFloaterPBRPacker::hasLocalTextures() const
+{
+    for (const LLUUID& tracking_id : mLocalTextureIds)
+    {
+        if (tracking_id.notNull())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ALFloaterPBRPacker::registerLocalTextures(std::string& error_out)
+{
+    LLLocalBitmapMgr* manager = LLLocalBitmapMgr::getInstance();
+    if (!manager)
+    {
+        error_out = "The local texture system is unavailable.";
+        return false;
+    }
+
+    if (mOutputs.empty() || mOutputPaths.size() != mOutputs.size())
+    {
+        error_out = "Nothing has been packed yet.";
+        return false;
+    }
+
+    // Rebuilt rather than added to, so a re-pack that stopped producing one of
+    // the maps -- the specular map after its sources were cleared, say -- ends
+    // up with a null id and clears that slot on the next apply instead of
+    // leaving the previous upload in place.
+    mLocalTextureIds.fill(LLUUID::null);
+
+    for (size_t i = 0; i < mOutputs.size(); ++i)
+    {
+        const ALPackDest dest = mOutputs[i].mDest;
+        if (dest >= OUTPUT_COUNT)
+        {
+            continue;
+        }
+
+        // The paths are stable across re-packs, so a second apply hands the
+        // same filenames back. addUnitInternal() returns the existing unit for
+        // a file rather than adding a duplicate, so this is idempotent and the
+        // world ids already applied in-world stay valid.
+        const LLUUID tracking_id = manager->addUnit(mOutputPaths[i]);
+        if (tracking_id.isNull())
+        {
+            error_out = "Could not register " + gDirUtilp->getBaseFileName(mOutputPaths[i])
+                      + " as a local texture.";
+            return false;
+        }
+
+        mLocalTextureIds[dest] = tracking_id;
+    }
+
+    return true;
+}
+
+void ALFloaterPBRPacker::onApplyToSelection()
+{
+    if (mMode != ALPackMode::SPEC_GLOSS || mOutputs.empty())
+    {
+        return;
+    }
+
+    LLObjectSelectionHandle selection = LLSelectMgr::getInstance()->getSelection();
+    if (selection.isNull() || selection->isEmpty())
+    {
+        setStatus("Select a face to apply to first.");
+        return;
+    }
+
+    std::string error;
+    if (!registerLocalTextures(error))
+    {
+        setStatus(error);
+        return;
+    }
+
+    LLLocalBitmapMgr* manager = LLLocalBitmapMgr::getInstance();
+    const LLUUID diffuse_id  = manager->getWorldID(mLocalTextureIds[AL_SPECGLOSS_DIFFUSE]);
+    const LLUUID normal_id   = manager->getWorldID(mLocalTextureIds[AL_SPECGLOSS_NORMAL]);
+    const LLUUID specular_id = manager->getWorldID(mLocalTextureIds[AL_SPECGLOSS_SPECULAR]);
+
+    // The legacy bumpiness and shininess presets are a separate, older
+    // mechanism that fights a material's own maps, so clear them the way the
+    // build floater does when it assigns one.
+    LLSelectMgr::getInstance()->selectionSetBumpmap(0, LLUUID::null);
+    LLSelectMgr::getInstance()->selectionSetShiny(0, LLUUID::null);
+
+    if (diffuse_id.notNull())
+    {
+        LLSelectMgr::getInstance()->selectionSetImage(diffuse_id);
+    }
+
+    ALSpecGlossApplyFunctor functor;
+    functor.mNormalID       = normal_id;
+    functor.mSpecularID     = specular_id;
+    functor.mPackedGloss    = mInputs[(size_t)ALPackSlot::GLOSSINESS].notNull();
+    functor.mPackedEnv      = mInputs[(size_t)ALPackSlot::SPECULAR_ENV].notNull();
+    functor.mPackedSpecular = mInputs[(size_t)ALPackSlot::SPECULAR_COLOR].notNull();
+
+    // The alpha mode has to match whatever was packed into the diffuse alpha,
+    // since the same eight bits mean transparency or emission depending on it.
+    if (diffuseAlphaSlot() == ALPackSlot::EMISSIVE)
+    {
+        functor.mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE;
+    }
+    else if (diffuseHasAlpha())
+    {
+        // Keyed on what survived the pack rather than on a source having been
+        // supplied: a fully opaque alpha is dropped, and putting a face in the
+        // alpha render pass for transparency it does not have costs real frames
+        // in-world.
+        functor.mAlphaMode = LLMaterial::DIFFUSE_ALPHA_MODE_BLEND;
+    }
+
+    LLSelectMgr::getInstance()->selectionSetMaterialParams(&functor);
+
+    setStatus(llformat("Applied %d local texture%s to the selection.",
+                       (S32)mOutputs.size(), mOutputs.size() == 1 ? "" : "s"));
+    refreshControls();
+}
+
+bool ALFloaterPBRPacker::diffuseHasAlpha() const
+{
+    // Whether the packed diffuse map actually kept an alpha channel. The pack
+    // drops a fully opaque one, so this is the honest answer to "does this
+    // material need a blend mode" even when a source did carry alpha.
+    for (const ALPackOutput& output : mOutputs)
+    {
+        if (output.mDest == AL_SPECGLOSS_DIFFUSE)
+        {
+            return output.mImage.notNull() && output.mImage->getComponents() == 4;
+        }
+    }
+    return false;
+}
+
 std::string ALFloaterPBRPacker::suggestedMaterialName() const
 {
     // Name the material after whichever source map the creator supplied first,
     // which is nearly always <material>_BaseColor and so reads correctly once
     // the suffix is trimmed.
-    for (const SlotDef& def : sSlotDefs)
+    for (ALPackSlot slot : mActiveSlots)
     {
-        const std::string& path = mSlotPaths[(size_t)def.mSlot];
+        const std::string& path = mSlotPaths[(size_t)slot];
         if (path.empty())
         {
             continue;
@@ -1355,7 +1972,8 @@ std::string ALFloaterPBRPacker::suggestedMaterialName() const
 
 void ALFloaterPBRPacker::onSendToMaterialEditor()
 {
-    if (mOutputs.empty())
+    // The material editor only speaks glTF.
+    if (mMode != ALPackMode::GLTF_PBR || mOutputs.empty())
     {
         return;
     }
@@ -1378,16 +1996,16 @@ void ALFloaterPBRPacker::onSendToMaterialEditor()
 
 void ALFloaterPBRPacker::refreshControls()
 {
-    for (const SlotDef& def : sSlotDefs)
+    for (ALPackSlot slot : mActiveSlots)
     {
-        const SlotUI& ui = mSlotUI[(size_t)def.mSlot];
-        const std::string& path = mSlotPaths[(size_t)def.mSlot];
+        const SlotUI& ui = mSlotUI[(size_t)slot];
+        const std::string& path = mSlotPaths[(size_t)slot];
         const bool filled = !path.empty();
 
         // With the filename no longer shown on the card, the full path lives
         // in the tooltip. An empty slot goes back to the XUI hint so the click
         // target still explains itself.
-        const std::string tip = filled ? path : mSlotEmptyTip[(size_t)def.mSlot];
+        const std::string tip = filled ? path : mSlotEmptyTip[(size_t)slot];
         if (ui.mThumb)
         {
             ui.mThumb->setToolTip(tip);
@@ -1426,6 +2044,10 @@ void ALFloaterPBRPacker::refreshControls()
     {
         mSendToEditorBtn->setEnabled(!mPacking && !mOutputs.empty());
     }
+    if (mApplyToSelectionBtn)
+    {
+        mApplyToSelectionBtn->setEnabled(!mPacking && !mOutputs.empty());
+    }
 }
 
 void ALFloaterPBRPacker::setStatus(const std::string& message)
@@ -1442,9 +2064,9 @@ void ALFloaterPBRPacker::draw()
 
     // Per-slot thumbnails: what the pack will read out of each source, with
     // the current channel selection and inversion already applied.
-    for (const SlotDef& def : sSlotDefs)
+    for (ALPackSlot slot : mActiveSlots)
     {
-        const size_t index = (size_t)def.mSlot;
+        const size_t index = (size_t)slot;
         const SlotUI& ui = mSlotUI[index];
         if (!ui.mThumb)
         {
@@ -1455,7 +2077,7 @@ void ALFloaterPBRPacker::draw()
         // placeholder for a null texture.
         if (mSlotThumbDirty[index] && mSlotThumbSrc[index].notNull())
         {
-            rebuildSlotThumb(def.mSlot);
+            rebuildSlotThumb(slot);
         }
 
         // Inset by the panel's border so it stays visible around the preview.
@@ -1481,10 +2103,9 @@ void ALFloaterPBRPacker::draw()
     // Packed results, each in its own card. A slot with no result draws
     // nothing, matching how an unfilled source card looks -- the card border
     // is what says the slot exists.
-    for (const OutputDef& def : sOutputDefs)
+    for (ALPackDest dest : mActiveOutputs)
     {
-        const size_t slot = (size_t)def.mDest;
-        const OutputUI& out = mOutputUI[slot];
+        const OutputUI& out = mOutputUI[(size_t)dest];
         if (!out.mThumb)
         {
             continue;
@@ -1492,6 +2113,6 @@ void ALFloaterPBRPacker::draw()
 
         LLRect rect = localRectOf(out.mThumb);
         rect.stretch(-1);
-        draw_texture_in_rect(mOutputTex[slot], rect);
+        draw_texture_in_rect(mOutputTex[(size_t)dest], rect);
     }
 }

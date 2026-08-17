@@ -56,27 +56,31 @@ public:
     bool tick() override;
 
 private:
-    // One card per ingest slot. mInvert is a toggle button rather than a
-    // checkbox so the state reads as a pressed icon and carries no label to
-    // translate. mChannel and mInvert are only present where they mean
-    // something -- see sSlotDefs.
+    // One card per ingest slot, bound to a generic XUI card when the material
+    // type changes -- the two modes ingest different maps but the cards are
+    // interchangeable, so there is one set of widgets rather than one per mode.
+    // mInvert is a toggle button rather than a checkbox so the state reads as a
+    // pressed icon and carries no label to translate. mChannel and mInvert are
+    // left null where they mean nothing for the slot, and their widgets hidden.
     // mThumb is a transparent button rather than a panel: the preview is the
     // slot's hit area, since clicking the image is what people reach for
     // before hunting for a browse button.
     struct SlotUI
     {
         LLView*     mCard    = nullptr;
+        LLTextBox*  mLabel   = nullptr;
         LLButton*   mClear   = nullptr;
         LLComboBox* mChannel = nullptr;
         LLButton*   mInvert  = nullptr;
         LLButton*   mThumb   = nullptr;
     };
 
-    // One card per packed texture, indexed by LLGLTFMaterial::TextureInfo so a
-    // result can be filed straight into its slot.
+    // One card per packed texture, indexed by the result's mDest so a result
+    // can be filed straight into its slot.
     struct OutputUI
     {
         LLView*    mCard  = nullptr;
+        LLTextBox* mLabel = nullptr;
         LLView*    mThumb = nullptr;
         LLTextBox* mSize  = nullptr;
     };
@@ -89,24 +93,51 @@ private:
         PRESET_SEPARATE_GLOSS,    // separate maps, roughness supplied as gloss
     };
 
-    static constexpr size_t OUTPUT_COUNT = (size_t)LLGLTFMaterial::GLTF_TEXTURE_INFO_COUNT;
+    enum ESpecGlossPreset
+    {
+        SG_PRESET_SEPARATE = 0,   // glossiness and environment each read from red
+        SG_PRESET_FROM_ROUGHNESS, // glossiness supplied as a roughness map
+    };
+
+    static constexpr size_t OUTPUT_COUNT = AL_PACK_MAX_OUTPUTS;
 
     void onBrowse(ALPackSlot slot);
     void onFilePicked(ALPackSlot slot, const std::vector<std::string>& filenames);
     void onClear(ALPackSlot slot);
+
+    // The card callbacks are bound once and resolve their slot through
+    // mCardSlot at click time. They cannot capture the slot, because
+    // LLUICtrl::setCommitCallback and LLButton::setClickedCallback *connect* to
+    // a signal rather than replace it -- rebinding per mode change stacked a
+    // handler each time, so one click opened a file picker per flip.
+    void onCardBrowse(size_t card);
+    void onCardClear(size_t card);
     void onPack();
     void onSave();
     void onSaveLocationPicked(const std::vector<std::string>& filenames);
     void onSettingChanged();
     void onMakeLocalMaterial();
     void onSendToMaterialEditor();
+    void onApplyToSelection();
     void onAddFiles();
     void onFilesPicked(const std::vector<std::string>& filenames);
     void onPresetChanged();
     void applyPreset(S32 preset);
+    void onModeChanged();
 
-    LLPointer<LLImageRaw> outputFor(LLGLTFMaterial::TextureInfo dest) const;
+    // Point the generic cards at the slots and packed textures this mode uses,
+    // label them, and hide the controls the mode has no use for. Everything
+    // loaded so far is dropped: the slots mean different things now.
+    void applyMode(ALPackMode mode);
+
+    LLPointer<LLImageRaw> outputFor(ALPackDest dest) const;
     std::string           suggestedMaterialName() const;
+
+    // Which source feeds the diffuse map's alpha. Second Life stores one
+    // diffuse alpha mode per face, so opacity and an emissive mask cannot both
+    // be honoured -- an explicit emissive mask wins, and the pack warns when
+    // both are supplied.
+    ALPackSlot diffuseAlphaSlot() const;
 
     void            refreshControls();
     void            setStatus(const std::string& message);
@@ -130,6 +161,21 @@ private:
     // .gltf/.glb on disk and owns the textures itself.
     bool writeLocalMaterialFile(std::string& path_out, std::string& error_out);
 
+    // Register each packed map with the local texture system, reusing the unit
+    // already registered for a path rather than adding a second one. Legacy
+    // materials have no asset to hold the set together, so the maps travel as
+    // loose textures and this is how they get a world id to assign.
+    bool registerLocalTextures(std::string& error_out);
+    bool hasLocalTextures() const;
+
+    // Whether the packed diffuse map kept an alpha channel, which decides
+    // whether the applied material needs a blend mode.
+    bool diffuseHasAlpha() const;
+
+    // Take a fresh stem for the packed files. Called when the material type
+    // changes so a re-pack cannot overwrite files a local asset still reads.
+    void newTempStem();
+
     // Rect of a widget in this floater's own drawing coordinates. The slot
     // widgets live inside card panels, so their getRect() is card-relative.
     LLRect localRectOf(const LLView* view) const;
@@ -143,11 +189,28 @@ private:
 
     static ALPackChannel channelFromIndex(S32 index);
 
+    ALPackMode              mMode = ALPackMode::GLTF_PBR;
+    std::vector<ALPackSlot> mActiveSlots;    // ingest slots this mode uses
+    std::vector<ALPackDest> mActiveOutputs;  // packed textures this mode produces
+
+    // The physical cards, looked up and wired once in postBuild. A mode change
+    // re-points mSlotUI and mOutputUI at these rather than touching the widgets
+    // or their callbacks again.
+    std::vector<SlotUI>     mCards;
+    std::vector<OutputUI>   mOutputCards;
+    // Which ingest slot each card carries right now, ALPackSlot::COUNT for a
+    // card this mode leaves unused. This is what the once-bound card callbacks
+    // dispatch through.
+    std::vector<ALPackSlot> mCardSlot;
+
     std::array<SlotUI, (size_t)ALPackSlot::COUNT>     mSlotUI;
     std::array<std::string, (size_t)ALPackSlot::COUNT> mSlotPaths;
-    // The per-slot "click to choose ..." hint from the XUI, kept so an empty
-    // slot can show it again after a loaded slot replaced it with the path.
+    // The per-slot "click to choose ..." hint, kept so an empty slot can show
+    // it again after a loaded slot replaced it with the path.
     std::array<std::string, (size_t)ALPackSlot::COUNT> mSlotEmptyTip;
+    // The slot's title, used for status lines as well as the card, so a message
+    // says "Diffuse" in SpecGloss mode where it says "Base Color" in the other.
+    std::array<std::string, (size_t)ALPackSlot::COUNT> mSlotLabel;
     ALPackInputSet                                    mInputs;
 
     // Source-file watching. A changed timestamp is not acted on until it has
@@ -169,17 +232,26 @@ private:
     std::vector<std::string> mOutputPaths;
 
     // Stem shared by every packed file this session writes, so a re-pack
-    // overwrites in place and the local material picks up the change.
+    // overwrites in place and the local material or local textures pick up the
+    // change.
     std::string mTempStem;
     std::string mGltfPath;
     LLUUID      mLocalMaterialId;   // tracking id of the local material, if made
+
+    // Tracking ids of the local textures backing each packed map, indexed by
+    // mDest. SpecGloss only -- the glTF path hands its files to the local
+    // material system, which owns its own textures.
+    std::array<LLUUID, OUTPUT_COUNT> mLocalTextureIds;
 
     LLButton*   mPackBtn     = nullptr;
     LLButton*   mSaveBtn     = nullptr;
     LLButton*   mMakeLocalBtn = nullptr;
     LLButton*   mSendToEditorBtn = nullptr;
+    LLButton*   mApplyToSelectionBtn = nullptr;
     LLButton*   mAddFilesBtn = nullptr;
-    LLComboBox* mPresetCombo = nullptr;
+    LLComboBox* mModeCombo   = nullptr;
+    LLComboBox* mPresetCombo = nullptr;      // glTF PBR presets
+    LLComboBox* mPresetSGCombo = nullptr;    // SpecGloss presets
     LLComboBox* mMaxSizeCombo = nullptr;
     LLCheckBoxCtrl* mAutoRepackCheck = nullptr;
     LLTextBox*  mStatusText = nullptr;
