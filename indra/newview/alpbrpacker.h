@@ -38,9 +38,21 @@
 // stays free of viewer texture headers.
 constexpr S32 AL_PBR_PACK_MAX_DIM = 2048;
 
+// Which of Second Life's two material systems a recipe targets. They are the
+// same channel-routing problem with different destinations, so they share the
+// engine entirely and differ only in their recipe table.
+enum class ALPackMode : U8
+{
+    GLTF_PBR = 0,   // base colour / normal / ORM / emissive
+    SPEC_GLOSS,     // diffuse / normal+gloss / specular+environment
+    COUNT
+};
+
 // The maps a creator feeds in. These are authoring-side concepts and do not
-// map one-to-one onto the four textures Second Life actually stores -- that
-// translation is the whole point of a recipe.
+// map one-to-one onto the textures Second Life actually stores -- that
+// translation is the whole point of a recipe. Several are shared between the
+// two modes under different names: BASE_COLOR is the SpecGloss diffuse map,
+// and EMISSIVE is its emissive mask.
 enum class ALPackSlot : U8
 {
     BASE_COLOR = 0,
@@ -50,8 +62,36 @@ enum class ALPackSlot : U8
     METALLIC,
     NORMAL,
     OPACITY,
+    GLOSSINESS,
+    SPECULAR_COLOR,
+    SPECULAR_ENV,
     COUNT
 };
+
+// Destinations for ALPackMode::SPEC_GLOSS. Second Life's legacy materials
+// carry six authoring maps in three uploads, because glossiness rides in the
+// normal map's alpha and environment intensity in the specular map's --
+// see materialF.glsl, which multiplies the Glossiness and Environment sliders
+// by those two channels.
+enum ALSpecGlossTexture : U8
+{
+    AL_SPECGLOSS_DIFFUSE = 0,
+    AL_SPECGLOSS_NORMAL,
+    AL_SPECGLOSS_SPECULAR,
+    AL_SPECGLOSS_COUNT
+};
+
+// Where a packed image lands. Interpreted against the recipe's mode:
+// LLGLTFMaterial::TextureInfo for GLTF_PBR, ALSpecGlossTexture for SPEC_GLOSS.
+using ALPackDest = U8;
+
+// Enough destination slots for either mode, so the UI can hold one fixed array
+// of output cards rather than one per mode.
+constexpr size_t AL_PACK_MAX_OUTPUTS = 4;
+static_assert((size_t)LLGLTFMaterial::GLTF_TEXTURE_INFO_COUNT <= AL_PACK_MAX_OUTPUTS,
+              "glTF gained a texture slot; widen AL_PACK_MAX_OUTPUTS");
+static_assert((size_t)AL_SPECGLOSS_COUNT <= AL_PACK_MAX_OUTPUTS,
+              "SpecGloss gained a texture slot; widen AL_PACK_MAX_OUTPUTS");
 
 // Which channel of a source image feeds one output channel. LUMINANCE is for
 // the case where a creator hands us a colour image for a scalar map.
@@ -84,7 +124,7 @@ struct ALPackChannelSource
 struct ALPackTarget
 {
     std::string                        mName;
-    LLGLTFMaterial::TextureInfo        mDest = LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR;
+    ALPackDest                         mDest = 0;
     S8                                 mComponents = 3;
     std::array<ALPackChannelSource, 4> mChannels;
     bool                               mEnabled = true;
@@ -92,12 +132,21 @@ struct ALPackTarget
 
 // The full packing description. Kept as a plain list so that adding a texture
 // slot Second Life does not have today (occlusion as its own map, clearcoat,
-// sheen, anisotropy...) is a table entry rather than an engine change.
+// sheen, anisotropy...) is a table entry rather than an engine change. The
+// same is what let the SpecGloss mode be a second table rather than a second
+// engine.
 class ALPBRPackRecipe
 {
 public:
-    // Base Color / Normal / ORM / Emissive -- what SL stores today.
+    // Base Color / Normal / ORM / Emissive -- what SL's glTF materials store.
     static ALPBRPackRecipe secondLifeDefault();
+
+    // Diffuse / Normal+Glossiness / Specular+Environment -- what SL's legacy
+    // materials store. No JSON asset exists for these, so the outputs are
+    // uploaded as loose textures and assigned per face.
+    static ALPBRPackRecipe secondLifeSpecGloss();
+
+    static ALPBRPackRecipe forMode(ALPackMode mode);
 
     std::vector<ALPackTarget> mTargets;
 };
@@ -106,9 +155,9 @@ using ALPackInputSet = std::array<LLPointer<LLImageRaw>, (size_t)ALPackSlot::COU
 
 struct ALPackOutput
 {
-    std::string                 mName;
-    LLGLTFMaterial::TextureInfo mDest = LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR;
-    LLPointer<LLImageRaw>       mImage;
+    std::string           mName;
+    ALPackDest            mDest = 0;
+    LLPointer<LLImageRaw> mImage;
 };
 
 using ALPackOutputSet = std::vector<ALPackOutput>;
@@ -116,10 +165,11 @@ using ALPackOutputSet = std::vector<ALPackOutput>;
 namespace ALPBRPacker
 {
     // The value a channel must take when its source map is absent. This is the
-    // identity for however glTF consumes that channel, not simply black:
-    // roughness and metallic are multiplied by their factors, so 255 leaves the
-    // factor in full control; occlusion of 255 means unoccluded; a missing
-    // normal is a flat (128,128,255) tangent-space normal.
+    // identity for however the renderer consumes that channel, not simply
+    // black: roughness, metallic, glossiness and environment intensity are all
+    // multiplied by a slider, so 255 leaves that slider in full control;
+    // occlusion of 255 means unoccluded; a missing normal is a flat
+    // (128,128,255) tangent-space normal.
     U8 neutralValue(ALPackSlot slot, ALPackChannel channel);
 
     const char* slotName(ALPackSlot slot);

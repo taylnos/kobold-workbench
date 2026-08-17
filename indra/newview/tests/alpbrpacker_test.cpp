@@ -25,6 +25,8 @@
 
 #include "linden_common.h"
 
+#include <set>
+
 #include "../test/lltut.h"
 
 #include "../alpbrpacker.h"
@@ -55,7 +57,7 @@ namespace
         return image->getData()[(size_t)index * image->getComponents() + channel];
     }
 
-    const ALPackOutput* find_output(const ALPackOutputSet& outputs, LLGLTFMaterial::TextureInfo dest)
+    const ALPackOutput* find_output(const ALPackOutputSet& outputs, ALPackDest dest)
     {
         for (const ALPackOutput& output : outputs)
         {
@@ -294,5 +296,175 @@ namespace tut
         const ALPackOutput* orm = find_output(mOutputs, LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS);
         ensure("ORM produced", orm != nullptr);
         ensure_equals("grayscale read into green", (S32)pixel_at(orm->mImage, 0, 1), 77);
+    }
+
+    // ---- SpecGloss ----------------------------------------------------------
+
+    // Glossiness rides in the normal map's alpha, so supplying it alone still
+    // has to produce a normal upload: a flat tangent-space normal carrying the
+    // gloss. There is nowhere else in the legacy material for it to live.
+    template<> template<>
+    void pbrpacker_object::test<13>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeSpecGloss();
+        mInputs[(size_t)ALPackSlot::GLOSSINESS] = make_image(32, 32, 1, 180);
+
+        ensure("pack succeeds", pack());
+        ensure_equals("only the normal map is produced", (S32)mOutputs.size(), 1);
+
+        const ALPackOutput* normal = find_output(mOutputs, AL_SPECGLOSS_NORMAL);
+        ensure("normal produced", normal != nullptr);
+        ensure_equals("flat normal red", (S32)pixel_at(normal->mImage, 0, 0), 128);
+        ensure_equals("flat normal green", (S32)pixel_at(normal->mImage, 0, 1), 128);
+        ensure_equals("flat normal blue", (S32)pixel_at(normal->mImage, 0, 2), 255);
+        ensure_equals("gloss in alpha", (S32)pixel_at(normal->mImage, 0, 3), 180);
+    }
+
+    // Normal and glossiness together: the pairing the mode exists for.
+    template<> template<>
+    void pbrpacker_object::test<14>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeSpecGloss();
+        mInputs[(size_t)ALPackSlot::NORMAL]     = make_image(64, 64, 3, 120, 130, 240);
+        mInputs[(size_t)ALPackSlot::GLOSSINESS] = make_image(64, 64, 1, 64);
+
+        ensure("pack succeeds", pack());
+
+        const ALPackOutput* normal = find_output(mOutputs, AL_SPECGLOSS_NORMAL);
+        ensure("normal produced", normal != nullptr);
+        ensure_equals("normal keeps four channels", (S32)normal->mImage->getComponents(), 4);
+        ensure_equals("normal red", (S32)pixel_at(normal->mImage, 0, 0), 120);
+        ensure_equals("normal green", (S32)pixel_at(normal->mImage, 0, 1), 130);
+        ensure_equals("normal blue", (S32)pixel_at(normal->mImage, 0, 2), 240);
+        ensure_equals("gloss in alpha", (S32)pixel_at(normal->mImage, 0, 3), 64);
+    }
+
+    // Without a glossiness map the neutral fill is a fully opaque alpha, which
+    // is dropped -- the Glossiness slider is then the only control, exactly as
+    // for a normal map uploaded without one.
+    template<> template<>
+    void pbrpacker_object::test<15>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeSpecGloss();
+        mInputs[(size_t)ALPackSlot::NORMAL] = make_image(32, 32, 3, 128, 128, 255);
+
+        ensure("pack succeeds", pack());
+
+        const ALPackOutput* normal = find_output(mOutputs, AL_SPECGLOSS_NORMAL);
+        ensure("normal produced", normal != nullptr);
+        ensure_equals("opaque alpha dropped", (S32)normal->mImage->getComponents(), 3);
+    }
+
+    // Specular tint and environment intensity pack into one upload the same
+    // way, environment in alpha.
+    template<> template<>
+    void pbrpacker_object::test<16>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeSpecGloss();
+        mInputs[(size_t)ALPackSlot::SPECULAR_COLOR] = make_image(32, 32, 3, 200, 150, 100);
+        mInputs[(size_t)ALPackSlot::SPECULAR_ENV]   = make_image(32, 32, 1, 40);
+
+        ensure("pack succeeds", pack());
+
+        const ALPackOutput* specular = find_output(mOutputs, AL_SPECGLOSS_SPECULAR);
+        ensure("specular produced", specular != nullptr);
+        ensure_equals("tint red", (S32)pixel_at(specular->mImage, 0, 0), 200);
+        ensure_equals("tint green", (S32)pixel_at(specular->mImage, 0, 1), 150);
+        ensure_equals("tint blue", (S32)pixel_at(specular->mImage, 0, 2), 100);
+        ensure_equals("environment in alpha", (S32)pixel_at(specular->mImage, 0, 3), 40);
+    }
+
+    // Environment alone gets a white tint to ride on, so the Specular Color
+    // swatch stays in control of the highlight.
+    template<> template<>
+    void pbrpacker_object::test<17>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeSpecGloss();
+        mInputs[(size_t)ALPackSlot::SPECULAR_ENV] = make_image(16, 16, 1, 90);
+
+        ensure("pack succeeds", pack());
+        ensure_equals("only the specular map is produced", (S32)mOutputs.size(), 1);
+
+        const ALPackOutput* specular = find_output(mOutputs, AL_SPECGLOSS_SPECULAR);
+        ensure("specular produced", specular != nullptr);
+        ensure_equals("tint neutral is white", (S32)pixel_at(specular->mImage, 0, 0), 255);
+        ensure_equals("environment in alpha", (S32)pixel_at(specular->mImage, 0, 3), 90);
+    }
+
+    // The diffuse map is independent of the other two, and a diffuse with no
+    // alpha payload sheds its alpha channel like any other opaque colour map.
+    template<> template<>
+    void pbrpacker_object::test<18>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeSpecGloss();
+        mInputs[(size_t)ALPackSlot::BASE_COLOR] = make_image(64, 64, 3, 10, 20, 30);
+
+        ensure("pack succeeds", pack());
+        ensure_equals("only the diffuse map is produced", (S32)mOutputs.size(), 1);
+
+        const ALPackOutput* diffuse = find_output(mOutputs, AL_SPECGLOSS_DIFFUSE);
+        ensure("diffuse produced", diffuse != nullptr);
+        ensure_equals("opaque alpha dropped", (S32)diffuse->mImage->getComponents(), 3);
+        ensure_equals("diffuse red", (S32)pixel_at(diffuse->mImage, 0, 0), 10);
+    }
+
+    // An emissive mask bound into the diffuse alpha, which is what the floater
+    // does when that slot is filled. Nothing in the engine special-cases it --
+    // it is the same alpha rebinding opacity uses.
+    template<> template<>
+    void pbrpacker_object::test<19>()
+    {
+        mRecipe = ALPBRPackRecipe::secondLifeSpecGloss();
+        mInputs[(size_t)ALPackSlot::BASE_COLOR] = make_image(32, 32, 3, 60, 70, 80);
+        mInputs[(size_t)ALPackSlot::EMISSIVE]   = make_image(32, 32, 1, 200);
+
+        for (ALPackTarget& target : mRecipe.mTargets)
+        {
+            if (target.mDest == AL_SPECGLOSS_DIFFUSE)
+            {
+                target.mChannels[3] = ALPackChannelSource::from(ALPackSlot::EMISSIVE, ALPackChannel::RED);
+            }
+        }
+
+        ensure("pack succeeds", pack());
+
+        const ALPackOutput* diffuse = find_output(mOutputs, AL_SPECGLOSS_DIFFUSE);
+        ensure("diffuse produced", diffuse != nullptr);
+        ensure_equals("mask kept in alpha", (S32)diffuse->mImage->getComponents(), 4);
+        ensure_equals("diffuse red", (S32)pixel_at(diffuse->mImage, 0, 0), 60);
+        ensure_equals("emissive mask in alpha", (S32)pixel_at(diffuse->mImage, 0, 3), 200);
+    }
+
+    // The new slots multiply against a slider, so their neutral is white for
+    // the same reason roughness and metalness are.
+    template<> template<>
+    void pbrpacker_object::test<20>()
+    {
+        ensure_equals("glossiness neutral is white",
+                      (S32)ALPBRPacker::neutralValue(ALPackSlot::GLOSSINESS, ALPackChannel::RED), 255);
+        ensure_equals("specular colour neutral is white",
+                      (S32)ALPBRPacker::neutralValue(ALPackSlot::SPECULAR_COLOR, ALPackChannel::RED), 255);
+        ensure_equals("specular environment neutral is white",
+                      (S32)ALPBRPacker::neutralValue(ALPackSlot::SPECULAR_ENV, ALPackChannel::RED), 255);
+    }
+
+    // The two modes must not collide: a SpecGloss destination is only ever read
+    // against a SpecGloss recipe, so the two enums may overlap numerically, but
+    // each recipe has to keep its own destinations distinct.
+    template<> template<>
+    void pbrpacker_object::test<21>()
+    {
+        ALPBRPackRecipe spec_gloss = ALPBRPackRecipe::secondLifeSpecGloss();
+        ensure_equals("three SpecGloss targets", (S32)spec_gloss.mTargets.size(), 3);
+
+        std::set<ALPackDest> seen;
+        for (const ALPackTarget& target : spec_gloss.mTargets)
+        {
+            ensure("SpecGloss destinations are distinct", seen.insert(target.mDest).second);
+            ensure("every SpecGloss upload carries alpha", target.mComponents == 4);
+        }
+
+        ALPBRPackRecipe pbr = ALPBRPackRecipe::forMode(ALPackMode::GLTF_PBR);
+        ensure_equals("four glTF targets", (S32)pbr.mTargets.size(), 4);
     }
 }

@@ -114,6 +114,67 @@ ALPBRPackRecipe ALPBRPackRecipe::secondLifeDefault()
     return recipe;
 }
 
+// static
+ALPBRPackRecipe ALPBRPackRecipe::secondLifeSpecGloss()
+{
+    ALPBRPackRecipe recipe;
+
+    // Diffuse. Alpha is whatever the face's diffuse alpha mode makes of it --
+    // transparency, an alpha mask, or an emissive mask. Which source feeds it
+    // is the UI's call, since the three are mutually exclusive: LLMaterial
+    // carries one mDiffuseAlphaMode, not one per interpretation.
+    {
+        ALPackTarget target;
+        target.mName = "Diffuse";
+        target.mDest = AL_SPECGLOSS_DIFFUSE;
+        target.mComponents = 4;
+        target.mChannels[0] = ALPackChannelSource::from(ALPackSlot::BASE_COLOR, ALPackChannel::RED);
+        target.mChannels[1] = ALPackChannelSource::from(ALPackSlot::BASE_COLOR, ALPackChannel::GREEN);
+        target.mChannels[2] = ALPackChannelSource::from(ALPackSlot::BASE_COLOR, ALPackChannel::BLUE);
+        target.mChannels[3] = ALPackChannelSource::from(ALPackSlot::BASE_COLOR, ALPackChannel::ALPHA);
+        recipe.mTargets.push_back(target);
+    }
+
+    // Normal, carrying glossiness in alpha. materialF.glsl reads it as
+    // "glossiness *= vNt.a" against the Glossiness slider, so an absent
+    // glossiness map neutral-fills to 255 and the slider stays in charge.
+    // Second Life reads normals in the same OpenGL convention glTF does, so
+    // the DirectX green flip applies here unchanged.
+    {
+        ALPackTarget target;
+        target.mName = "Normal";
+        target.mDest = AL_SPECGLOSS_NORMAL;
+        target.mComponents = 4;
+        target.mChannels[0] = ALPackChannelSource::from(ALPackSlot::NORMAL, ALPackChannel::RED);
+        target.mChannels[1] = ALPackChannelSource::from(ALPackSlot::NORMAL, ALPackChannel::GREEN);
+        target.mChannels[2] = ALPackChannelSource::from(ALPackSlot::NORMAL, ALPackChannel::BLUE);
+        target.mChannels[3] = ALPackChannelSource::from(ALPackSlot::GLOSSINESS, ALPackChannel::RED);
+        recipe.mTargets.push_back(target);
+    }
+
+    // Specular tint, carrying environment intensity in alpha -- read as
+    // "env = env_intensity * spec.a" against the Environment slider.
+    {
+        ALPackTarget target;
+        target.mName = "Specular";
+        target.mDest = AL_SPECGLOSS_SPECULAR;
+        target.mComponents = 4;
+        target.mChannels[0] = ALPackChannelSource::from(ALPackSlot::SPECULAR_COLOR, ALPackChannel::RED);
+        target.mChannels[1] = ALPackChannelSource::from(ALPackSlot::SPECULAR_COLOR, ALPackChannel::GREEN);
+        target.mChannels[2] = ALPackChannelSource::from(ALPackSlot::SPECULAR_COLOR, ALPackChannel::BLUE);
+        target.mChannels[3] = ALPackChannelSource::from(ALPackSlot::SPECULAR_ENV, ALPackChannel::RED);
+        recipe.mTargets.push_back(target);
+    }
+
+    return recipe;
+}
+
+// static
+ALPBRPackRecipe ALPBRPackRecipe::forMode(ALPackMode mode)
+{
+    return (mode == ALPackMode::SPEC_GLOSS) ? secondLifeSpecGloss() : secondLifeDefault();
+}
+
 U8 ALPBRPacker::sampleChannel(const U8* pixel, S8 components, ALPackChannel channel)
 {
     switch (channel)
@@ -193,11 +254,12 @@ U8 ALPBRPacker::neutralValue(ALPackSlot slot, ALPackChannel channel)
         }
     }
 
-    // Everything else is the identity for how glTF consumes it: roughness and
-    // metallic are multiplied by their factors, so 255 leaves the factor in
-    // full control rather than pinning the result to zero; occlusion of 255
-    // means unoccluded; base colour and emissive are multiplied by their
-    // factors; a missing opacity is fully opaque.
+    // Everything else is the identity for how the renderer consumes it:
+    // roughness and metallic are multiplied by their glTF factors, glossiness
+    // and environment intensity by their legacy-material sliders, so 255 leaves
+    // that control in charge rather than pinning the result to zero; occlusion
+    // of 255 means unoccluded; base colour, diffuse, specular tint and emissive
+    // are multiplied by their factors; a missing opacity is fully opaque.
     return 255;
 }
 
@@ -205,14 +267,17 @@ const char* ALPBRPacker::slotName(ALPackSlot slot)
 {
     switch (slot)
     {
-    case ALPackSlot::BASE_COLOR: return "Base Color";
-    case ALPackSlot::EMISSIVE:   return "Emissive";
-    case ALPackSlot::OCCLUSION:  return "Occlusion";
-    case ALPackSlot::ROUGHNESS:  return "Roughness";
-    case ALPackSlot::METALLIC:   return "Metallic";
-    case ALPackSlot::NORMAL:     return "Normal";
-    case ALPackSlot::OPACITY:    return "Opacity";
-    default:                     return "Unknown";
+    case ALPackSlot::BASE_COLOR:     return "Base Color";
+    case ALPackSlot::EMISSIVE:       return "Emissive";
+    case ALPackSlot::OCCLUSION:      return "Occlusion";
+    case ALPackSlot::ROUGHNESS:      return "Roughness";
+    case ALPackSlot::METALLIC:       return "Metallic";
+    case ALPackSlot::NORMAL:         return "Normal";
+    case ALPackSlot::OPACITY:        return "Opacity";
+    case ALPackSlot::GLOSSINESS:     return "Glossiness";
+    case ALPackSlot::SPECULAR_COLOR: return "Specular Color";
+    case ALPackSlot::SPECULAR_ENV:   return "Specular Environment";
+    default:                         return "Unknown";
     }
 }
 
