@@ -6,10 +6,10 @@
  single_instance="true"
  reuse_instance="true"
  layout="topleft"
- height="740"
- width="550"
- min_height="740"
- min_width="550"
+ height="618"
+ width="450"
+ min_height="618"
+ min_width="450"
  can_resize="false">
 
     <!-- Slot card titles. The cards are generic, so which of these a card
@@ -24,7 +24,7 @@
     <floater.string name="slot_roughness">Roughness</floater.string>
     <floater.string name="slot_metallic">Metallic</floater.string>
     <floater.string name="slot_glossiness">Glossiness</floater.string>
-    <floater.string name="slot_specular_color">Specular Color</floater.string>
+    <floater.string name="slot_specular_color">Spec Color</floater.string>
     <floater.string name="slot_specular_env">Specular Env</floater.string>
 
     <!-- Shown on an empty slot; a filled slot shows its file path instead. -->
@@ -48,7 +48,7 @@
 
     <!-- Packed texture card titles. -->
     <floater.string name="out_base_color">Base Color</floater.string>
-    <floater.string name="out_orm">Metallic Roughness</floater.string>
+    <floater.string name="out_orm">Metallic Rough</floater.string>
     <floater.string name="out_emissive">Emissive</floater.string>
     <floater.string name="out_normal">Normal</floater.string>
     <floater.string name="out_diffuse">Diffuse</floater.string>
@@ -56,7 +56,7 @@
     <floater.string name="out_specular">Specular + Env</floater.string>
 
     <combo_box follows="left|top" layout="topleft"
-     left="8" top="16" width="200" height="22"
+     left="8" top="16" width="180" height="22"
      tool_tip="Which of Second Life's material systems to pack for"
      name="material_mode">
         <combo_box.item label="glTF PBR Material" name="pbr" value="0" />
@@ -67,44 +67,44 @@
     <!-- ============ Source Textures ============ -->
 
     <text type="string" follows="left|top" layout="topleft"
-     left="8" top="46" width="200" height="16" valign="center"
+     left="8" top="46" width="116" height="16" valign="center"
      font="SansSerifBold" name="source_section_label">Source Textures</text>
     <button follows="left|top" layout="topleft"
-     left="442" top="44" width="96" height="20" label="Add files..."
+     left="346" top="44" width="96" height="20" label="Add files..."
      tool_tip="Pick several maps at once and place them by filename"
      name="add_files" />
     <view_border follows="left|top" layout="topleft"
-     left="8" top="66" width="534" height="0"
+     left="8" top="66" width="434" height="0"
      bevel_style="none" border_thickness="1" mouse_opaque="false"
      name="rule_source" />
 
     <panel follows="left|top" layout="topleft" left="8" top="72"
-     width="128" height="170" border="true" name="slot0_card">
+     width="104" height="146" border="true" name="slot0_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="94" height="16" valign="center"
+         left="4" top="4" width="76" height="16" valign="center"
          name="slot0_label" />
-        <button follows="left|top" layout="topleft" left="102" top="3"
-         width="22" height="18" label="X"
+        <button follows="left|top" layout="topleft" left="80" top="3"
+         width="20" height="18" label="X"
          tool_tip="Clear this slot" name="slot0_clear" />
         <button follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" label=""
+         width="96" height="96" label=""
          image_unselected="Transparent" image_selected="Transparent"
          image_hover_unselected="Transparent" image_hover_selected="Transparent"
          image_disabled="Transparent" image_disabled_selected="Transparent"
          name="slot0_thumb" />
-        <combo_box follows="left|top" layout="topleft" left="4" top="144"
-         width="94" height="22"
+        <combo_box follows="left|top" layout="topleft" left="4" top="120"
+         width="70" height="22"
          tool_tip="Which channel of this file holds the data"
          name="slot0_channel">
             <combo_box.item label="Red" name="r" value="0" />
             <combo_box.item label="Green" name="g" value="1" />
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
-            <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Luma" name="l" value="4" />
             <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
-        <button follows="left|top" layout="topleft" left="100" top="144"
-         width="24" height="22" is_toggle="true"
+        <button follows="left|top" layout="topleft" left="78" top="120"
+         width="22" height="22" is_toggle="true"
          image_overlay="AL_Invert_Channel"
          image_unselected="Toolbar_Middle_Off"
          image_selected="Toolbar_Middle_Selected"
@@ -112,33 +112,33 @@
          name="slot0_invert" />
     </panel>
 
-    <panel follows="left|top" layout="topleft" left="142" top="72"
-     width="128" height="170" border="true" name="slot1_card">
+    <panel follows="left|top" layout="topleft" left="118" top="72"
+     width="104" height="146" border="true" name="slot1_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="94" height="16" valign="center"
+         left="4" top="4" width="76" height="16" valign="center"
          name="slot1_label" />
-        <button follows="left|top" layout="topleft" left="102" top="3"
-         width="22" height="18" label="X"
+        <button follows="left|top" layout="topleft" left="80" top="3"
+         width="20" height="18" label="X"
          tool_tip="Clear this slot" name="slot1_clear" />
         <button follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" label=""
+         width="96" height="96" label=""
          image_unselected="Transparent" image_selected="Transparent"
          image_hover_unselected="Transparent" image_hover_selected="Transparent"
          image_disabled="Transparent" image_disabled_selected="Transparent"
          name="slot1_thumb" />
-        <combo_box follows="left|top" layout="topleft" left="4" top="144"
-         width="94" height="22"
+        <combo_box follows="left|top" layout="topleft" left="4" top="120"
+         width="70" height="22"
          tool_tip="Which channel of this file holds the data"
          name="slot1_channel">
             <combo_box.item label="Red" name="r" value="0" />
             <combo_box.item label="Green" name="g" value="1" />
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
-            <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Luma" name="l" value="4" />
             <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
-        <button follows="left|top" layout="topleft" left="100" top="144"
-         width="24" height="22" is_toggle="true"
+        <button follows="left|top" layout="topleft" left="78" top="120"
+         width="22" height="22" is_toggle="true"
          image_overlay="AL_Invert_Channel"
          image_unselected="Toolbar_Middle_Off"
          image_selected="Toolbar_Middle_Selected"
@@ -146,33 +146,33 @@
          name="slot1_invert" />
     </panel>
 
-    <panel follows="left|top" layout="topleft" left="276" top="72"
-     width="128" height="170" border="true" name="slot2_card">
+    <panel follows="left|top" layout="topleft" left="228" top="72"
+     width="104" height="146" border="true" name="slot2_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="94" height="16" valign="center"
+         left="4" top="4" width="76" height="16" valign="center"
          name="slot2_label" />
-        <button follows="left|top" layout="topleft" left="102" top="3"
-         width="22" height="18" label="X"
+        <button follows="left|top" layout="topleft" left="80" top="3"
+         width="20" height="18" label="X"
          tool_tip="Clear this slot" name="slot2_clear" />
         <button follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" label=""
+         width="96" height="96" label=""
          image_unselected="Transparent" image_selected="Transparent"
          image_hover_unselected="Transparent" image_hover_selected="Transparent"
          image_disabled="Transparent" image_disabled_selected="Transparent"
          name="slot2_thumb" />
-        <combo_box follows="left|top" layout="topleft" left="4" top="144"
-         width="94" height="22"
+        <combo_box follows="left|top" layout="topleft" left="4" top="120"
+         width="70" height="22"
          tool_tip="Which channel of this file holds the data"
          name="slot2_channel">
             <combo_box.item label="Red" name="r" value="0" />
             <combo_box.item label="Green" name="g" value="1" />
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
-            <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Luma" name="l" value="4" />
             <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
-        <button follows="left|top" layout="topleft" left="100" top="144"
-         width="24" height="22" is_toggle="true"
+        <button follows="left|top" layout="topleft" left="78" top="120"
+         width="22" height="22" is_toggle="true"
          image_overlay="AL_Invert_Channel"
          image_unselected="Toolbar_Middle_Off"
          image_selected="Toolbar_Middle_Selected"
@@ -180,33 +180,33 @@
          name="slot2_invert" />
     </panel>
 
-    <panel follows="left|top" layout="topleft" left="410" top="72"
-     width="128" height="170" border="true" name="slot3_card">
+    <panel follows="left|top" layout="topleft" left="338" top="72"
+     width="104" height="146" border="true" name="slot3_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="94" height="16" valign="center"
+         left="4" top="4" width="76" height="16" valign="center"
          name="slot3_label" />
-        <button follows="left|top" layout="topleft" left="102" top="3"
-         width="22" height="18" label="X"
+        <button follows="left|top" layout="topleft" left="80" top="3"
+         width="20" height="18" label="X"
          tool_tip="Clear this slot" name="slot3_clear" />
         <button follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" label=""
+         width="96" height="96" label=""
          image_unselected="Transparent" image_selected="Transparent"
          image_hover_unselected="Transparent" image_hover_selected="Transparent"
          image_disabled="Transparent" image_disabled_selected="Transparent"
          name="slot3_thumb" />
-        <combo_box follows="left|top" layout="topleft" left="4" top="144"
-         width="94" height="22"
+        <combo_box follows="left|top" layout="topleft" left="4" top="120"
+         width="70" height="22"
          tool_tip="Which channel of this file holds the data"
          name="slot3_channel">
             <combo_box.item label="Red" name="r" value="0" />
             <combo_box.item label="Green" name="g" value="1" />
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
-            <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Luma" name="l" value="4" />
             <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
-        <button follows="left|top" layout="topleft" left="100" top="144"
-         width="24" height="22" is_toggle="true"
+        <button follows="left|top" layout="topleft" left="78" top="120"
+         width="22" height="22" is_toggle="true"
          image_overlay="AL_Invert_Channel"
          image_unselected="Toolbar_Middle_Off"
          image_selected="Toolbar_Middle_Selected"
@@ -214,33 +214,33 @@
          name="slot3_invert" />
     </panel>
 
-    <panel follows="left|top" layout="topleft" left="8" top="246"
-     width="128" height="170" border="true" name="slot4_card">
+    <panel follows="left|top" layout="topleft" left="8" top="222"
+     width="104" height="146" border="true" name="slot4_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="94" height="16" valign="center"
+         left="4" top="4" width="76" height="16" valign="center"
          name="slot4_label" />
-        <button follows="left|top" layout="topleft" left="102" top="3"
-         width="22" height="18" label="X"
+        <button follows="left|top" layout="topleft" left="80" top="3"
+         width="20" height="18" label="X"
          tool_tip="Clear this slot" name="slot4_clear" />
         <button follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" label=""
+         width="96" height="96" label=""
          image_unselected="Transparent" image_selected="Transparent"
          image_hover_unselected="Transparent" image_hover_selected="Transparent"
          image_disabled="Transparent" image_disabled_selected="Transparent"
          name="slot4_thumb" />
-        <combo_box follows="left|top" layout="topleft" left="4" top="144"
-         width="94" height="22"
+        <combo_box follows="left|top" layout="topleft" left="4" top="120"
+         width="70" height="22"
          tool_tip="Which channel of this file holds the data"
          name="slot4_channel">
             <combo_box.item label="Red" name="r" value="0" />
             <combo_box.item label="Green" name="g" value="1" />
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
-            <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Luma" name="l" value="4" />
             <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
-        <button follows="left|top" layout="topleft" left="100" top="144"
-         width="24" height="22" is_toggle="true"
+        <button follows="left|top" layout="topleft" left="78" top="120"
+         width="22" height="22" is_toggle="true"
          image_overlay="AL_Invert_Channel"
          image_unselected="Toolbar_Middle_Off"
          image_selected="Toolbar_Middle_Selected"
@@ -248,33 +248,33 @@
          name="slot4_invert" />
     </panel>
 
-    <panel follows="left|top" layout="topleft" left="142" top="246"
-     width="128" height="170" border="true" name="slot5_card">
+    <panel follows="left|top" layout="topleft" left="118" top="222"
+     width="104" height="146" border="true" name="slot5_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="94" height="16" valign="center"
+         left="4" top="4" width="76" height="16" valign="center"
          name="slot5_label" />
-        <button follows="left|top" layout="topleft" left="102" top="3"
-         width="22" height="18" label="X"
+        <button follows="left|top" layout="topleft" left="80" top="3"
+         width="20" height="18" label="X"
          tool_tip="Clear this slot" name="slot5_clear" />
         <button follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" label=""
+         width="96" height="96" label=""
          image_unselected="Transparent" image_selected="Transparent"
          image_hover_unselected="Transparent" image_hover_selected="Transparent"
          image_disabled="Transparent" image_disabled_selected="Transparent"
          name="slot5_thumb" />
-        <combo_box follows="left|top" layout="topleft" left="4" top="144"
-         width="94" height="22"
+        <combo_box follows="left|top" layout="topleft" left="4" top="120"
+         width="70" height="22"
          tool_tip="Which channel of this file holds the data"
          name="slot5_channel">
             <combo_box.item label="Red" name="r" value="0" />
             <combo_box.item label="Green" name="g" value="1" />
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
-            <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Luma" name="l" value="4" />
             <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
-        <button follows="left|top" layout="topleft" left="100" top="144"
-         width="24" height="22" is_toggle="true"
+        <button follows="left|top" layout="topleft" left="78" top="120"
+         width="22" height="22" is_toggle="true"
          image_overlay="AL_Invert_Channel"
          image_unselected="Toolbar_Middle_Off"
          image_selected="Toolbar_Middle_Selected"
@@ -282,33 +282,33 @@
          name="slot5_invert" />
     </panel>
 
-    <panel follows="left|top" layout="topleft" left="276" top="246"
-     width="128" height="170" border="true" name="slot6_card">
+    <panel follows="left|top" layout="topleft" left="228" top="222"
+     width="104" height="146" border="true" name="slot6_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="94" height="16" valign="center"
+         left="4" top="4" width="76" height="16" valign="center"
          name="slot6_label" />
-        <button follows="left|top" layout="topleft" left="102" top="3"
-         width="22" height="18" label="X"
+        <button follows="left|top" layout="topleft" left="80" top="3"
+         width="20" height="18" label="X"
          tool_tip="Clear this slot" name="slot6_clear" />
         <button follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" label=""
+         width="96" height="96" label=""
          image_unselected="Transparent" image_selected="Transparent"
          image_hover_unselected="Transparent" image_hover_selected="Transparent"
          image_disabled="Transparent" image_disabled_selected="Transparent"
          name="slot6_thumb" />
-        <combo_box follows="left|top" layout="topleft" left="4" top="144"
-         width="94" height="22"
+        <combo_box follows="left|top" layout="topleft" left="4" top="120"
+         width="70" height="22"
          tool_tip="Which channel of this file holds the data"
          name="slot6_channel">
             <combo_box.item label="Red" name="r" value="0" />
             <combo_box.item label="Green" name="g" value="1" />
             <combo_box.item label="Blue" name="b" value="2" />
             <combo_box.item label="Alpha" name="a" value="3" />
-            <combo_box.item label="Luminance" name="l" value="4" />
+            <combo_box.item label="Luma" name="l" value="4" />
             <combo_box.item label="Max RGB" name="m" value="5" />
         </combo_box>
-        <button follows="left|top" layout="topleft" left="100" top="144"
-         width="24" height="22" is_toggle="true"
+        <button follows="left|top" layout="topleft" left="78" top="120"
+         width="22" height="22" is_toggle="true"
          image_overlay="AL_Invert_Channel"
          image_unselected="Toolbar_Middle_Off"
          image_selected="Toolbar_Middle_Selected"
@@ -316,18 +316,18 @@
          name="slot6_invert" />
     </panel>
 
-    <!-- ============ Packing Options ============ -->
+    <!-- ============ Packing Options and Output ============ -->
 
     <text type="string" follows="left|top" layout="topleft"
-     left="8" top="426" width="200" height="16" valign="center"
-     font="SansSerifBold" name="options_section_label">Packing Options</text>
+     left="8" top="378" width="250" height="16" valign="center"
+     font="SansSerifBold" name="output_section_label">Packing Options and Output</text>
     <view_border follows="left|top" layout="topleft"
-     left="8" top="444" width="534" height="0"
+     left="8" top="398" width="434" height="0"
      bevel_style="none" border_thickness="1" mouse_opaque="false"
-     name="rule_options" />
+     name="rule_output" />
 
     <combo_box follows="left|top" layout="topleft"
-     left="8" top="450" width="186" height="22"
+     left="8" top="404" width="150" height="22"
      tool_tip="How the occlusion, roughness and metalness sources are read"
      name="preset">
         <combo_box.item label="Packed ORM / ARM mask" name="packed" value="1" />
@@ -335,14 +335,14 @@
         <combo_box.item label="Separate maps (gloss)" name="gloss" value="2" />
     </combo_box>
     <combo_box follows="left|top" layout="topleft"
-     left="8" top="450" width="186" height="22" visible="false"
+     left="8" top="404" width="150" height="22" visible="false"
      tool_tip="How the glossiness and specular sources are read"
      name="preset_specgloss">
         <combo_box.item label="Separate maps" name="sg_separate" value="0" />
-        <combo_box.item label="Glossiness from roughness" name="sg_rough" value="1" />
+        <combo_box.item label="Gloss from roughness" name="sg_rough" value="1" />
     </combo_box>
     <combo_box follows="left|top" layout="topleft"
-     left="202" top_delta="0" width="116" height="22"
+     left="164" top_delta="0" width="90" height="22"
      tool_tip="Size of the packed output. Auto Size follows the largest source map, never above 2048."
      name="max_size">
         <combo_box.item label="Auto Size" name="auto" value="0" />
@@ -351,100 +351,113 @@
         <combo_box.item label="Max 512" name="512" value="512" />
     </combo_box>
     <check_box follows="left|top" layout="topleft"
-     left="328" top_delta="1" width="110" height="20" label="Auto re-pack"
+     left="260" top_delta="1" width="94" height="20" label="Auto re-pack"
      tool_tip="Watch the source files and re-pack when they change on disk"
      name="auto_repack" />
     <button follows="left|top" layout="topleft"
-     left="444" top_delta="-1" width="94" height="22" label="Pack"
+     left="360" top_delta="-1" width="82" height="22" label="Pack"
      tool_tip="Combine the source maps into Second Life's texture set"
      name="pack" />
 
-    <!-- ============ Packed Textures ============ -->
-
-    <text type="string" follows="left|top" layout="topleft"
-     left="8" top="482" width="200" height="16" valign="center"
-     font="SansSerifBold" name="packed_section_label">Packed Textures</text>
-    <view_border follows="left|top" layout="topleft"
-     left="8" top="500" width="534" height="0"
-     bevel_style="none" border_thickness="1" mouse_opaque="false"
-     name="rule_packed" />
-
-    <panel follows="left|top" layout="topleft" left="8" top="506"
-     width="128" height="170" border="true" name="out0_card">
+    <panel follows="left|top" layout="topleft" left="8" top="432"
+     width="104" height="146" border="true" name="out0_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="120" height="16" valign="center"
+         left="4" top="4" width="96" height="16" valign="center"
          name="out0_label" />
         <panel follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" background_visible="false"
+         width="96" height="96" background_visible="false"
          name="out0_thumb" />
+        <!-- Sits in the preview's inner corner. Transparent, because the
+             preview is painted after the child views; the floater draws the
+             caution glyph over it. Present for the hit area and tooltip. -->
+        <button follows="left|top" layout="topleft" left="84" top="102"
+         width="16" height="16" label="" visible="false"
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         name="out0_warn" />
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="144" width="120" height="22"
+         left="4" top="120" width="96" height="22"
          halign="center" valign="center"
          name="out0_size" />
     </panel>
 
-    <panel follows="left|top" layout="topleft" left="142" top="506"
-     width="128" height="170" border="true" name="out1_card">
+    <panel follows="left|top" layout="topleft" left="118" top="432"
+     width="104" height="146" border="true" name="out1_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="120" height="16" valign="center"
+         left="4" top="4" width="96" height="16" valign="center"
          name="out1_label" />
         <panel follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" background_visible="false"
+         width="96" height="96" background_visible="false"
          name="out1_thumb" />
+        <button follows="left|top" layout="topleft" left="84" top="102"
+         width="16" height="16" label="" visible="false"
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         name="out1_warn" />
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="144" width="120" height="22"
+         left="4" top="120" width="96" height="22"
          halign="center" valign="center"
          name="out1_size" />
     </panel>
 
-    <panel follows="left|top" layout="topleft" left="276" top="506"
-     width="128" height="170" border="true" name="out2_card">
+    <panel follows="left|top" layout="topleft" left="228" top="432"
+     width="104" height="146" border="true" name="out2_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="120" height="16" valign="center"
+         left="4" top="4" width="96" height="16" valign="center"
          name="out2_label" />
         <panel follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" background_visible="false"
+         width="96" height="96" background_visible="false"
          name="out2_thumb" />
+        <button follows="left|top" layout="topleft" left="84" top="102"
+         width="16" height="16" label="" visible="false"
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         name="out2_warn" />
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="144" width="120" height="22"
+         left="4" top="120" width="96" height="22"
          halign="center" valign="center"
          name="out2_size" />
     </panel>
 
-    <panel follows="left|top" layout="topleft" left="410" top="506"
-     width="128" height="170" border="true" name="out3_card">
+    <panel follows="left|top" layout="topleft" left="338" top="432"
+     width="104" height="146" border="true" name="out3_card">
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="4" width="120" height="16" valign="center"
+         left="4" top="4" width="96" height="16" valign="center"
          name="out3_label" />
         <panel follows="left|top" layout="topleft" left="4" top="22"
-         width="120" height="120" background_visible="false"
+         width="96" height="96" background_visible="false"
          name="out3_thumb" />
+        <button follows="left|top" layout="topleft" left="84" top="102"
+         width="16" height="16" label="" visible="false"
+         image_unselected="Transparent" image_selected="Transparent"
+         image_hover_unselected="Transparent" image_hover_selected="Transparent"
+         image_disabled="Transparent" image_disabled_selected="Transparent"
+         name="out3_warn" />
         <text type="string" follows="left|top" layout="topleft"
-         left="4" top="144" width="120" height="22"
+         left="4" top="120" width="96" height="22"
          halign="center" valign="center"
          name="out3_size" />
     </panel>
 
     <button follows="left|top" layout="topleft"
-     left="8" top="684" width="110" height="22" label="Save to disk..."
+     left="8" top="586" width="96" height="22" label="Save to disk..."
      tool_tip="Write the packed maps out as PNG files"
      name="save_to_disk" />
     <button follows="left|top" layout="topleft"
-     left="124" top_delta="0" width="164" height="22" label="Make Local Material"
+     left="110" top_delta="0" width="146" height="22" label="Make Local Material"
      tool_tip="Register the packed set as a local material. It appears in the Local tab of any material picker and updates in place when you re-pack."
      name="make_local_material" />
     <button follows="left|top" layout="topleft"
-     left="294" top_delta="0" width="166" height="22" label="Send to Material Editor"
+     left="262" top_delta="0" width="180" height="22" label="Send to Material Editor"
      tool_tip="Hand the packed maps to the material editor to name, price and upload"
      name="send_to_editor" />
     <button follows="left|top" layout="topleft"
-     left="124" top_delta="0" width="164" height="22" label="Apply to Selection"
+     left="110" top_delta="0" width="146" height="22" label="Apply to Selection"
      visible="false"
      tool_tip="Register the packed maps as local textures and set them on the selected faces, along with the glossiness, environment and alpha mode they were packed for"
      name="apply_to_selection" />
-
-    <text type="string" follows="left|top" layout="topleft"
-     left="8" top="712" width="534" height="18" valign="center"
-     use_ellipses="true" name="status" />
 
 </floater>

@@ -75,8 +75,9 @@ namespace
     constexpr F32 SOURCE_WATCH_PERIOD = 3.f;
 
     // Side of the cached per-slot thumbnail source. Re-rendered on every
-    // channel or invert toggle, so it stays small -- but large enough to still
-    // look sharp in a 120px card.
+    // channel or invert toggle, so it stays small -- but kept above the 96px
+    // the card draws it at, so the preview has resolution in hand rather than
+    // being resampled up if the cards ever grow again.
     //
     // Square, matching the square preview panels: since the draw stretches to
     // fill like any other texture swatch, an aspect-preserving intermediate
@@ -171,14 +172,53 @@ namespace
         std::string           mError;
     };
 
+    // An advisory tied to the packed texture it concerns, so it can hang off
+    // that card rather than queue up in a status line.
+    struct ALPackWarning
+    {
+        ALPackDest  mDest;
+        std::string mText;
+    };
+
     struct PackResult
     {
-        ALPackOutputSet          mOutputs;
-        std::vector<std::string> mPaths;
-        std::vector<std::string> mWarnings;
-        std::string              mError;
-        bool                     mOk = false;
+        ALPackOutputSet            mOutputs;
+        std::vector<std::string>   mPaths;
+        std::vector<ALPackWarning> mWarnings;
+        std::string                mError;
+        bool                       mOk = false;
     };
+
+    // Which packed texture a given ingest slot ends up in, so a warning about
+    // a source map lands on the output a creator would go looking at.
+    ALPackDest warn_dest_for_slot(ALPackMode mode, ALPackSlot slot)
+    {
+        if (mode == ALPackMode::GLTF_PBR)
+        {
+            switch (slot)
+            {
+            case ALPackSlot::EMISSIVE: return LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE;
+            case ALPackSlot::NORMAL:   return LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL;
+            case ALPackSlot::OCCLUSION:
+            case ALPackSlot::ROUGHNESS:
+            case ALPackSlot::METALLIC: return LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS;
+            default:                   return LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR;
+            }
+        }
+
+        // Both legacy modes: occlusion is folded into the fallback's diffuse,
+        // and roughness reaches the normal map as its glossiness.
+        switch (slot)
+        {
+        case ALPackSlot::NORMAL:
+        case ALPackSlot::GLOSSINESS:
+        case ALPackSlot::ROUGHNESS:      return AL_SPECGLOSS_NORMAL;
+        case ALPackSlot::SPECULAR_COLOR:
+        case ALPackSlot::SPECULAR_ENV:
+        case ALPackSlot::METALLIC:       return AL_SPECGLOSS_SPECULAR;
+        default:                         return AL_SPECGLOSS_DIFFUSE;
+        }
+    }
 
     // Find a target in a recipe by the material slot it feeds.
     ALPackTarget* find_target(ALPBRPackRecipe& recipe, ALPackDest dest)
@@ -409,8 +449,13 @@ namespace
     using ALSlotLabels = std::array<std::string, (size_t)ALPackSlot::COUNT>;
 
     void collect_warnings(const ALPackInputSet& inputs, ALPackMode mode, S32 max_dim,
-                          const ALSlotLabels& labels, std::vector<std::string>& warnings)
+                          const ALSlotLabels& labels, std::vector<ALPackWarning>& warnings)
     {
+        auto warn = [&](ALPackSlot about, const std::string& text)
+        {
+            warnings.push_back({ warn_dest_for_slot(mode, about), text });
+        };
+
         for (size_t i = 0; i < inputs.size(); ++i)
         {
             const LLPointer<LLImageRaw>& image = inputs[i];
@@ -420,8 +465,8 @@ namespace
             }
             if (image->getWidth() > max_dim || image->getHeight() > max_dim)
             {
-                warnings.push_back(llformat("%s is larger than %d and will be downscaled.",
-                                            labels[i].c_str(), max_dim));
+                warn((ALPackSlot)i, llformat("%s is larger than %d and will be downscaled.",
+                                             labels[i].c_str(), max_dim));
             }
         }
 
@@ -437,7 +482,7 @@ namespace
             channel_stats(normal, 1, min_value, max_value, mean);
             if (mean < 118.f)
             {
-                warnings.push_back("Normal green averages low, which suggests a DirectX-convention map.");
+                warn(ALPackSlot::NORMAL, "Normal green averages low, which suggests a DirectX-convention map.");
             }
         }
 
@@ -448,7 +493,8 @@ namespace
                 // Not a nicety: the legacy renderer's only emission lerps the
                 // lit result towards the diffuse texel, so the glow colour has
                 // to be the diffuse colour, which spends the alpha channel.
-                warnings.push_back("Emissive is composited into the diffuse map and takes its alpha, so this material cannot also be transparent.");
+                warn(ALPackSlot::EMISSIVE,
+                     "Emissive is composited into the diffuse map and takes its alpha, so this material cannot also be transparent.");
             }
 
             // No warning for metalness. Keeping the base colour in the diffuse
@@ -458,7 +504,7 @@ namespace
             // its own and the environment term is a clear coat.
             if (inputs[(size_t)ALPackSlot::ROUGHNESS].isNull())
             {
-                warnings.push_back("No roughness map, so glossiness packs as fully rough.");
+                warn(ALPackSlot::ROUGHNESS, "No roughness map, so glossiness packs as fully rough.");
             }
             return;
         }
@@ -471,7 +517,8 @@ namespace
             if (inputs[(size_t)ALPackSlot::EMISSIVE].notNull() &&
                 inputs[(size_t)ALPackSlot::OPACITY].notNull())
             {
-                warnings.push_back("Emissive mask and opacity share the diffuse alpha; only the emissive mask is packed.");
+                warn(ALPackSlot::EMISSIVE,
+                     "Emissive mask and opacity share the diffuse alpha; only the emissive mask is packed.");
             }
 
             const LLPointer<LLImageRaw>& gloss = inputs[(size_t)ALPackSlot::GLOSSINESS];
@@ -480,7 +527,7 @@ namespace
                 channel_stats(gloss, 0, min_value, max_value, mean);
                 if (min_value == max_value)
                 {
-                    warnings.push_back("Glossiness is a constant value; the Glossiness slider alone would do.");
+                    warn(ALPackSlot::GLOSSINESS, "Glossiness is a constant value; the Glossiness slider alone would do.");
                 }
             }
 
@@ -490,7 +537,8 @@ namespace
                 channel_stats(env, 0, min_value, max_value, mean);
                 if (max_value == 0)
                 {
-                    warnings.push_back("Specular environment is black, which switches environment reflection off entirely.");
+                    warn(ALPackSlot::SPECULAR_ENV,
+                         "Specular environment is black, which switches environment reflection off entirely.");
                 }
             }
             return;
@@ -502,7 +550,7 @@ namespace
             channel_stats(occlusion, 0, min_value, max_value, mean);
             if (min_value == 255)
             {
-                warnings.push_back("Occlusion is uniformly white and can be left out.");
+                warn(ALPackSlot::OCCLUSION, "Occlusion is uniformly white and can be left out.");
             }
         }
 
@@ -512,7 +560,7 @@ namespace
             channel_stats(metallic, 0, min_value, max_value, mean);
             if (min_value == max_value)
             {
-                warnings.push_back("Metallic is a constant value; the Metalness Factor alone would do.");
+                warn(ALPackSlot::METALLIC, "Metallic is a constant value; the Metalness Factor alone would do.");
             }
         }
 
@@ -522,7 +570,7 @@ namespace
             channel_stats(base_color, 3, min_value, max_value, mean);
             if (min_value < 255)
             {
-                warnings.push_back("Base colour carries alpha; set Alpha Mode in the material editor.");
+                warn(ALPackSlot::BASE_COLOR, "Base colour carries alpha; set Alpha Mode in the material editor.");
             }
         }
     }
@@ -630,7 +678,7 @@ bool ALFloaterPBRPacker::postBuild()
     mModeCombo = getChild<LLComboBox>("material_mode");
     mModeCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onModeChanged(); });
 
-    mStatusText = getChild<LLTextBox>("status");
+    mWarnIcon = LLUI::getUIImage("Popup_Caution");
 
     // Look the cards up and wire them once. Both the LLUICtrl and LLButton
     // callback setters return a boost::signals2::connection -- they add a slot
@@ -671,6 +719,7 @@ bool ALFloaterPBRPacker::postBuild()
         out.mLabel = getChild<LLTextBox>(prefix + "_label");
         out.mThumb = getChild<LLView>(prefix + "_thumb");
         out.mSize  = getChild<LLTextBox>(prefix + "_size");
+        out.mWarn  = getChild<LLButton>(prefix + "_warn");
 
         mOutputCards.push_back(out);
     }
@@ -830,10 +879,11 @@ void ALFloaterPBRPacker::applyMode(ALPackMode mode)
         mOutputUI[(size_t)def.mDest] = widgets;
         widgets.mLabel->setText(getString(std::string("out_") + def.mKey));
 
-        // This card served a different packed map a moment ago, and its size
-        // line is not covered by the clearOutputs() above -- that ran against
-        // the outgoing mode's bindings.
+        // This card served a different packed map a moment ago, and neither its
+        // size line nor its caution glyph is covered by the clearOutputs()
+        // above -- that ran against the outgoing mode's bindings.
         widgets.mSize->setText(std::string());
+        widgets.mWarn->setVisible(false);
 
         mActiveOutputs.push_back(def.mDest);
     }
@@ -869,9 +919,10 @@ void ALFloaterPBRPacker::applyMode(ALPackMode mode)
         applyPreset(PRESET_PACKED_ORM);
     }
 
-    setStatus(dropped > 0 ? llformat("Cleared %d source map%s this material type has no slot for.",
-                                     dropped, dropped == 1 ? "" : "s")
-                          : std::string());
+    // Nothing said about the slots that were dropped: their cards visibly empty
+    // in the same frame, which is the feedback, and a toast per mode flip would
+    // be noise.
+    (void)dropped;
     refreshControls();
 }
 
@@ -1005,11 +1056,20 @@ void ALFloaterPBRPacker::clearOutputs()
     mOutputTex.fill(nullptr);
     mOutputThumbsDirty = false;
 
+    for (std::string& warning : mOutputWarnings)
+    {
+        warning.clear();
+    }
+
     for (OutputUI& out : mOutputUI)
     {
         if (out.mSize)
         {
             out.mSize->setText(std::string());
+        }
+        if (out.mWarn)
+        {
+            out.mWarn->setVisible(false);
         }
     }
 }
@@ -1180,7 +1240,7 @@ void ALFloaterPBRPacker::onFilesPicked(const std::vector<std::string>& filenames
             }
             list += name;
         }
-        setStatus(llformat("Assigned %d file%s. Could not place: %s",
+        notifyUser(llformat("Assigned %d file%s. Could not place: %s",
                            assigned, assigned == 1 ? "" : "s", list.c_str()));
     }
 }
@@ -1246,11 +1306,9 @@ void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool
     LL::WorkQueue::ptr_t general_queue = LL::WorkQueue::getInstance("General");
     if (!main_queue || !general_queue)
     {
-        setStatus("Worker threads unavailable.");
+        notifyUser("Worker threads unavailable.");
         return;
     }
-
-    setStatus("Loading " + gDirUtilp->getBaseFileName(path) + "...");
 
     auto result = std::make_shared<LoadResult>();
     LLHandle<ALFloaterPBRPacker> handle = getDerivedHandle<ALFloaterPBRPacker>();
@@ -1264,7 +1322,7 @@ void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool
     const bool posted = main_queue->postTo(
         general_queue,
         [path, result]() { result->mImage = ALPBRPacker::loadRaw(path, result->mError); },
-        [handle, slot, path, result]()
+        [handle, slot, path, auto_repack, result]()
         {
             ALFloaterPBRPacker* self = handle.get();
             if (!self)
@@ -1276,9 +1334,14 @@ void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool
 
             if (result->mImage.isNull())
             {
-                // A decode failure during a watch is usually the paint program
-                // still writing. Leave the slot alone; the next tick retries.
-                self->setStatus(result->mError);
+                // Silent when the watch triggered this: a decode failure there
+                // is usually the paint program still writing, and the next tick
+                // retries. Toasting it would fire every three seconds for as
+                // long as a large export takes to hit the disk.
+                if (!auto_repack)
+                {
+                    notifyUser(result->mError);
+                }
             }
             else
             {
@@ -1294,11 +1357,6 @@ void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool
                 // Whatever was packed no longer matches the inputs, so retire
                 // it rather than leaving Save and Apply pointed at stale maps.
                 self->clearOutputs();
-
-                self->setStatus(llformat("%s: %dx%d",
-                                         self->mSlotLabel[(size_t)slot].c_str(),
-                                         (S32)result->mImage->getWidth(),
-                                         (S32)result->mImage->getHeight()));
             }
 
             self->refreshControls();
@@ -1316,7 +1374,7 @@ void ALFloaterPBRPacker::loadSlot(ALPackSlot slot, const std::string& path, bool
         // blocked behind a load that never lands.
         --mPendingLoads;
         mRepackWhenLoaded = false;
-        setStatus("Could not queue the decode.");
+        notifyUser("Could not queue the decode.");
     }
 }
 
@@ -1530,7 +1588,7 @@ void ALFloaterPBRPacker::onPack()
     LL::WorkQueue::ptr_t general_queue = LL::WorkQueue::getInstance("General");
     if (!main_queue || !general_queue)
     {
-        setStatus("Worker threads unavailable.");
+        notifyUser("Worker threads unavailable.");
         return;
     }
 
@@ -1552,7 +1610,6 @@ void ALFloaterPBRPacker::onPack()
     mPacking = true;
     clearOutputs();
     refreshControls();
-    setStatus("Packing...");
 
     auto result = std::make_shared<PackResult>();
     LLHandle<ALFloaterPBRPacker> handle = getDerivedHandle<ALFloaterPBRPacker>();
@@ -1599,7 +1656,7 @@ void ALFloaterPBRPacker::onPack()
 
             if (!result->mOk)
             {
-                self->setStatus(result->mError);
+                self->notifyUser(result->mError);
                 self->refreshControls();
                 return;
             }
@@ -1608,8 +1665,8 @@ void ALFloaterPBRPacker::onPack()
             self->mOutputPaths = result->mPaths;
             self->mOutputThumbsDirty = true;
 
-            // Each packed map reports its own size on its card, so the status
-            // line is left for warnings.
+            // Each packed map reports its own size on its card. A successful
+            // pack says nothing else -- the cards filling in is the result.
             for (const ALPackOutput& output : self->mOutputs)
             {
                 const size_t slot = (size_t)output.mDest;
@@ -1622,22 +1679,23 @@ void ALFloaterPBRPacker::onPack()
                 }
             }
 
-            std::string summary;
-            for (const std::string& warning : result->mWarnings)
+            // Advisories hang off the texture they concern rather than queueing
+            // into one line, so a creator reads them next to the map that is
+            // actually affected. Several can land on the same card.
+            for (const ALPackWarning& warning : result->mWarnings)
             {
-                if (!summary.empty())
+                const size_t slot = (size_t)warning.mDest;
+                if (slot >= OUTPUT_COUNT)
                 {
-                    summary += "   ";
+                    continue;
                 }
-                summary += warning;
+                std::string& text = self->mOutputWarnings[slot];
+                if (!text.empty())
+                {
+                    text += "\n";
+                }
+                text += warning.mText;
             }
-            if (summary.empty())
-            {
-                summary = llformat("Packed %d texture%s.",
-                                   (S32)self->mOutputs.size(),
-                                   self->mOutputs.size() == 1 ? "" : "s");
-            }
-            self->setStatus(summary);
 
             // A local material already exists for this set, so rewrite its
             // glTF and reload it -- that is what makes auto re-pack show up
@@ -1674,7 +1732,7 @@ void ALFloaterPBRPacker::onPack()
         // Same reasoning as loadSlot: without the reply, mPacking would latch
         // on and leave every button disabled.
         mPacking = false;
-        setStatus("Could not queue the pack.");
+        notifyUser("Could not queue the pack.");
         refreshControls();
     }
 }
@@ -1724,13 +1782,13 @@ void ALFloaterPBRPacker::onSaveLocationPicked(const std::vector<std::string>& fi
         LLPointer<LLImagePNG> png = new LLImagePNG;
         if (!png->encode(output.mImage, 0.f) || !png->save(path))
         {
-            setStatus("Could not write " + gDirUtilp->getBaseFileName(path));
+            notifyUser("Could not write " + gDirUtilp->getBaseFileName(path));
             return;
         }
         ++written;
     }
 
-    setStatus(llformat("Wrote %d file%s to %s", written, written == 1 ? "" : "s", directory.c_str()));
+    notifyUser(llformat("Wrote %d file%s to %s", written, written == 1 ? "" : "s", directory.c_str()));
 }
 
 bool ALFloaterPBRPacker::writeLocalMaterialFile(std::string& path_out, std::string& error_out)
@@ -1819,14 +1877,14 @@ void ALFloaterPBRPacker::onMakeLocalMaterial()
     std::string error;
     if (!writeLocalMaterialFile(mGltfPath, error))
     {
-        setStatus(error);
+        notifyUser(error);
         return;
     }
 
     LLLocalGLTFMaterialMgr* material_mgr = LLLocalGLTFMaterialMgr::getInstance();
     if (!material_mgr)
     {
-        setStatus("The local material system is unavailable.");
+        notifyUser("The local material system is unavailable.");
         return;
     }
 
@@ -1837,19 +1895,19 @@ void ALFloaterPBRPacker::onMakeLocalMaterial()
         // Already registered. The glTF was just rewritten, so prod the manager
         // rather than adding a second unit for the same file.
         material_mgr->doUpdates();
-        setStatus("Updated local material \"" + name + "\".");
+        notifyUser("Updated local material \"" + name + "\".");
         return;
     }
 
     LLUUID tracking_id;
     if (material_mgr->addUnit(mGltfPath, tracking_id) < 1 || tracking_id.isNull())
     {
-        setStatus("Could not create a local material.");
+        notifyUser("Could not create a local material.");
         return;
     }
 
     mLocalMaterialId = tracking_id;
-    setStatus("Local material \"" + name + "\" is ready -- pick it from the Local tab of any material picker.");
+    notifyUser("Local material \"" + name + "\" is ready -- pick it from the Local tab of any material picker.");
     refreshControls();
 }
 
@@ -1934,14 +1992,14 @@ void ALFloaterPBRPacker::onApplyToSelection()
     LLObjectSelectionHandle selection = LLSelectMgr::getInstance()->getSelection();
     if (selection.isNull() || selection->isEmpty())
     {
-        setStatus("Select a face to apply to first.");
+        notifyUser("Select a face to apply to first.");
         return;
     }
 
     std::string error;
     if (!registerLocalTextures(error))
     {
-        setStatus(error);
+        notifyUser(error);
         return;
     }
 
@@ -2009,7 +2067,7 @@ void ALFloaterPBRPacker::onApplyToSelection()
 
     LLSelectMgr::getInstance()->selectionSetMaterialParams(&functor);
 
-    setStatus(llformat("Applied %d local texture%s to the selection.",
+    notifyUser(llformat("Applied %d local texture%s to the selection.",
                        (S32)mOutputs.size(), mOutputs.size() == 1 ? "" : "s"));
     refreshControls();
 }
@@ -2069,7 +2127,7 @@ void ALFloaterPBRPacker::onSendToMaterialEditor()
     LLMaterialEditor* editor = (LLMaterialEditor*)LLFloaterReg::getInstance("material_editor");
     if (!editor)
     {
-        setStatus("Could not open the material editor.");
+        notifyUser("Could not open the material editor.");
         return;
     }
 
@@ -2079,7 +2137,7 @@ void ALFloaterPBRPacker::onSendToMaterialEditor()
                                   outputFor(LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE),
                                   suggestedMaterialName());
 
-    setStatus("Sent to the material editor.");
+    notifyUser("Sent to the material editor.");
 }
 
 void ALFloaterPBRPacker::refreshControls()
@@ -2136,14 +2194,34 @@ void ALFloaterPBRPacker::refreshControls()
     {
         mApplyToSelectionBtn->setEnabled(!mPacking && !mOutputs.empty());
     }
+
+    // A caution glyph appears in a packed texture's corner only while that
+    // texture has something to say, and carries the text as its tooltip.
+    for (ALPackDest dest : mActiveOutputs)
+    {
+        const OutputUI& out = mOutputUI[(size_t)dest];
+        if (!out.mWarn)
+        {
+            continue;
+        }
+
+        const std::string& warning = mOutputWarnings[(size_t)dest];
+        out.mWarn->setVisible(!warning.empty());
+        out.mWarn->setToolTip(warning);
+    }
 }
 
-void ALFloaterPBRPacker::setStatus(const std::string& message)
+// static
+void ALFloaterPBRPacker::notifyUser(const std::string& message)
 {
-    if (mStatusText)
+    if (message.empty())
     {
-        mStatusText->setText(message);
+        return;
     }
+
+    // A notifytip, so it behaves like every other passing system message
+    // instead of a line of text only visible while this floater is open.
+    LLNotificationsUtil::add("SystemMessageTip", LLSD().with("MESSAGE", message));
 }
 
 void ALFloaterPBRPacker::draw()
@@ -2202,5 +2280,13 @@ void ALFloaterPBRPacker::draw()
         LLRect rect = localRectOf(out.mThumb);
         rect.stretch(-1);
         draw_texture_in_rect(mOutputTex[(size_t)dest], rect);
+
+        // After the preview, because the preview covers the whole card
+        // interior -- the warn button is transparent and exists only to own
+        // the hit area, so the glyph has to be painted here to be seen.
+        if (out.mWarn && out.mWarn->getVisible() && mWarnIcon.notNull())
+        {
+            mWarnIcon->draw(localRectOf(out.mWarn));
+        }
     }
 }

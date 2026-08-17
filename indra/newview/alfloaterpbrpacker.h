@@ -33,6 +33,7 @@
 #include "alpbrpacker.h"
 #include "lleventtimer.h"
 #include "llfloater.h"
+#include "lluiimage.h"
 #include "llviewertexture.h"
 
 class LLButton;
@@ -77,12 +78,16 @@ private:
 
     // One card per packed texture, indexed by the result's mDest so a result
     // can be filed straight into its slot.
+    // mWarn is a transparent button in the preview's inner corner: the preview
+    // is painted after the child views, so the caution glyph is drawn by the
+    // floater and the widget exists only to own the hit area and the tooltip.
     struct OutputUI
     {
         LLView*    mCard  = nullptr;
         LLTextBox* mLabel = nullptr;
         LLView*    mThumb = nullptr;
         LLTextBox* mSize  = nullptr;
+        LLButton*  mWarn  = nullptr;
     };
 
     // Preset order must match the combo_box items in the XUI.
@@ -140,9 +145,13 @@ private:
     ALPackSlot diffuseAlphaSlot() const;
 
     void            refreshControls();
-    void            setStatus(const std::string& message);
     ALPBRPackRecipe buildRecipe() const;
     bool            hasAnyInput() const;
+
+    // Raise a system toast. The floater has no status line: advisory warnings
+    // hang off the packed texture they concern, and everything else that is
+    // worth saying is worth saying where the user is looking.
+    static void notifyUser(const std::string& message);
 
     // Route a file to a slot with an explicit channel/invert, used by the
     // filename heuristics and the presets.
@@ -227,6 +236,10 @@ private:
 
     std::array<OutputUI, OUTPUT_COUNT>                   mOutputUI;
     std::array<LLPointer<LLViewerTexture>, OUTPUT_COUNT> mOutputTex;
+    // Advisory text for each packed texture, joined per destination. Empty
+    // means the card shows no caution glyph.
+    std::array<std::string, OUTPUT_COUNT>                mOutputWarnings;
+    LLPointer<LLUIImage>                                 mWarnIcon;
 
     ALPackOutputSet          mOutputs;
     std::vector<std::string> mOutputPaths;
@@ -254,7 +267,6 @@ private:
     LLComboBox* mPresetSGCombo = nullptr;    // SpecGloss presets
     LLComboBox* mMaxSizeCombo = nullptr;
     LLCheckBoxCtrl* mAutoRepackCheck = nullptr;
-    LLTextBox*  mStatusText = nullptr;
 
     S32  mPendingLoads = 0;
     bool mRepackWhenLoaded = false;
