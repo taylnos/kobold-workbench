@@ -2623,6 +2623,10 @@ void LLMaterialEditor::setFromPackedTextures(LLPointer<LLImageRaw> base_color,
     LLPointer<LLImageRaw> emissive_img   = emissive.notNull()   ? emissive->duplicate()   : nullptr;
     LLPointer<LLImageRaw> occlusion_img; // already folded into the ORM red channel
 
+    // Read before pack_textures(), which encodes through convertToUploadFile()
+    // and may rescale.
+    const bool base_has_alpha = base_color_img.notNull() && base_color_img->getComponents() == 4;
+
     // Retire every slot first. The editor is a single reused instance, so a
     // hand-off carrying fewer maps than whatever was loaded before would
     // otherwise inherit the leftovers: the id block below reads from
@@ -2699,6 +2703,27 @@ void LLMaterialEditor::setFromPackedTextures(LLPointer<LLImageRaw> base_color,
     setEmissiveUploadId(emissive_id);
     setNormalId(normal_id);
     setNormalUploadId(normal_id);
+
+    // Factors back to the glTF defaults, for the same reason the textures are
+    // retired above: this is a new material, not an edit of whatever the reused
+    // editor was last showing. Inheriting them is worse than inheriting a
+    // texture, because every factor multiplies the map beneath it -- arriving
+    // on a material whose Metalness Factor had been zeroed would silently
+    // multiply away the metalness just packed, with nothing on screen to say so.
+    setBaseColor(LLColor4::white);
+    setMetalnessFactor(1.f);
+    setRoughnessFactor(1.f);
+    setAlphaCutoff(0.5f);
+    setDoubleSided(false);
+
+    // glTF defaults emissiveFactor to black, which would multiply an emissive
+    // map away to nothing -- the same trap the local material path steps around
+    // when it writes its glTF.
+    setEmissiveColor(emissive_id.notNull() ? LLColor4::white : LLColor4::black);
+
+    // The packer drops a fully opaque alpha, so a base colour still carrying
+    // one is carrying real transparency.
+    setAlphaMode(base_has_alpha ? "BLEND" : "OPAQUE");
 
     if (!material_name.empty())
     {
