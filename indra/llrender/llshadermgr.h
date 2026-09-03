@@ -463,7 +463,6 @@ public:
         SPLIT_TONE_HIGHLIGHT_RATIO,         //  "uHighlightRatio"
         SPLIT_TONE_MIDTONE_RATIO,           //  "uMidtoneRatio"
         SPLIT_TONE_MIDTONE_AMOUNT,          //  "uMidtoneAmount"
-        SPLIT_TONE_MID,                     //  "uSplitToneMid"     (0.5 + balance * 0.4)
         SPLIT_TONE_AMOUNT,                  //  "uToneAmount"
 
         // Display-space grading — all CPU-precomputed to scale/bias pairs
@@ -476,11 +475,6 @@ public:
         COLOR_GRADE_SATURATION,             //  "uSaturation"
         COLOR_GRADE_VIBRANCE,               //  "uVibrance"
         COLOR_GRADE_HUE_SHIFT_NORM,         //  "uHueShiftNorm"     (degrees / 360)
-
-        // Per-channel filmic curves
-        COLOR_GRADE_CURVE_TOE,              //  "uCurveToe"
-        COLOR_GRADE_CURVE_INV_RANGE,        //  "uCurveInvRange"    (1 / (shoulder - toe))
-        COLOR_GRADE_CURVE_STRENGTH,         //  "uCurveStrength"
 
         // Vignette
         VIGNETTE_AMOUNT,                    //  "uVignetteAmount"
@@ -522,6 +516,16 @@ public:
         // End Alchemy Effects Stack
         TEXT_SHADOW_MODE,                   //  "textShadowMode"
 
+
+        // Split-tone luma ramps and the baked tone curve LUT. Appended at the
+        // tail rather than beside the split-tone and grading blocks above:
+        // this list and the string table in llshadermgr.cpp are parallel and
+        // ordinal-coupled, so appending keeps every earlier index stable.
+        SPLIT_TONE_SHADOW_RAMP,             //  "uSplitToneShadowRamp"    (1/ws, -(mid - ws)/ws)
+        SPLIT_TONE_HIGHLIGHT_RAMP,          //  "uSplitToneHighlightRamp" (1/wh, -mid/wh)
+        COLOR_GRADE_CURVE_LUT,              //  "uToneCurveLut"
+        COLOR_GRADE_CURVE_LUT_SCALE,        //  "uToneCurveLutScale"      (1 - 1/N, 0.5/N)
+        COLOR_GRADE_CURVE_AMOUNT,           //  "uToneCurveAmount"
 
         END_RESERVED_UNIFORMS
     } eGLSLReservedUniforms;
